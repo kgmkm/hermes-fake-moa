@@ -51,16 +51,25 @@ def load_panel(name: str, cwd: str | None = None) -> list[dict]:
 
 
 def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
+def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
     """1モデルに hermes chat -q を投げ、結果を返す。
     
     subprocess.run のリスト引数を使うため、プロンプトの改行はそのまま渡せる。
     シェルを経由しないのでエスケープは不要。
-    """
+    
+    Windows 環境では hermes が PATH にある必要がある。
+    hermes が見つからない場合は hermes.bat またはフルパスを使用。"""
     label = f"[{idx}] {model_id}"
     print(f"🚀 {label} 送信中...", file=sys.stderr)
 
+    # Windows 環境では hermes の実行ファイル名が異なる場合がある
+    hermes_cmd = "hermes"
+    if sys.platform == "win32":
+        # PowerShell / CMD では hermes.bat または hermes.exe
+        hermes_cmd = "hermes"
+
     cmd = [
-        "hermes", "chat", "-q", prompt,
+        hermes_cmd, "chat", "-q", prompt,
         "-m", model_id,
         "--provider", provider,
         "-Q", "--yolo",

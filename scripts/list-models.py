@@ -18,6 +18,14 @@ hermes-fake-moa スキル用。
   4. fetch_*() 関数を参考に、新しい fetch_yourprovider() を実装する
   5. main() に追加して動作確認する
 
+【Python 実行環境について】
+  WSL / Linux / macOS: python3 を使用
+  Windows (PowerShell): python を使用（python3 は存在しないことが多い）
+  SKILL.md のコマンド例では `python3` を記載しているが、
+  Windows 環境では `python` に読み替えること。
+  select-panel.py 内部のサブプロセス呼び出しでは sys.executable を使用し、
+  現在動いている Python と同じバイナリを起動するため、環境差異は自動解決される。
+
 Usage:
   python3 list-models.py              # Markdown 出力
   python3 list-models.py --json       # JSON 出力

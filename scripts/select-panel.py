@@ -69,7 +69,9 @@ def save_panels(data: dict, cwd: str | None = None):
 
 
 def fetch_models() -> list[dict]:
-    """list-models.py --json の結果を取得。"""
+    """list-models.py --json の結果を取得。
+    sys.executable を使うことで、Windows/WSL/macOS 全環境で
+    現在動いているのと同じ Python が起動される。"""
     r = subprocess.run(
         [sys.executable, str(LIST_MODELS), "--json"],
         capture_output=True, text=True, timeout=60

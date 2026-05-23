@@ -1,5 +1,18 @@
 # プロバイダ固有の注意点
 
+## Python / OS 環境
+
+| 環境 | Python コマンド | 備考 |
+|------|----------------|------|
+| WSL / Linux | `python3` | スクリプトの shebang も `#!/usr/bin/env python3` |
+| macOS | `python3` | Homebrew Python を想定 |
+| Windows (PowerShell) | `python` | `python3` は存在しないことが多い。`python` を使用 |
+| Windows (Git Bash) | `python` | 同上 |
+
+スクリプト内部のサブプロセス呼び出し（`select-panel.py` → `list-models.py`）は `sys.executable` を使用するため、現在動いている Python と同じバイナリが起動される。環境差異は自動解決される。
+
+`hermes` コマンドは PATH に含まれている必要がある。Windows では `hermes` は npm global install の `.cmd` ラッパーとして提供される。
+
 ## モデル名形式
 
 | プロバイダ | 形式 | 例 |

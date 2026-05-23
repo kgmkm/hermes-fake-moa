@@ -14,7 +14,10 @@ tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 
 - Hermes Agent が動作する環境
 - 1つ以上の LLM プロバイダが設定済み
-- Python 3.10+
+- Python 3.10+（Windows では `python` コマンドを使用）
+
+> **Windows (PowerShell) 環境**: コマンド例の `python3` を `python` に読み替えてください。
+> スクリプト内部のサブプロセス呼び出し（`select-panel.py` → `list-models.py`）は `sys.executable` を使用しており、環境差異は自動解決されます。
 
 ## 対応プロバイダ（2026年5月時点）
 
