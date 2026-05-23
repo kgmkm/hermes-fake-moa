@@ -44,11 +44,18 @@ python3 scripts/list-models.py --json > models.json
 
 ### Step 2: パネル（モデルセット）の選択
 
+**対話モード**（人間がターミナルで操作）:
 ```bash
-python3 scripts/select-panel.py
+python3 scripts/select-panel.py --name novel-revision
 ```
 
-対話的に 2〜5 モデルを選び、`panels.json` に保存する。
+**非対話モード**（エージェント・スクリプトから使用）:
+```bash
+python3 scripts/select-panel.py --name novel-revision \
+  --models "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous,gemini-2.5-flash:google"
+```
+
+`--models` 形式: `model_id:provider` をカンマ区切り。provider 省略時は自動選択。
 
 または手動で `panels.json` を編集:
 ```json
@@ -59,10 +66,6 @@ python3 scripts/select-panel.py
       {"id": "mimo-v2.5-pro", "provider": "opencode-go"},
       {"id": "deepseek/deepseek-v4-flash", "provider": "nous"},
       {"id": "gemini-2.5-flash", "provider": "google"}
-    ],
-    "code-review": [
-      {"id": "anthropic/claude-sonnet-4.6", "provider": "openrouter"},
-      {"id": "deepseek/deepseek-v4-pro", "provider": "opencode-go"}
     ]
   }
 }
@@ -78,6 +81,10 @@ python3 scripts/multi-chat.py --panel novel-revision --prompt "あなたの質�
 ```bash
 python3 scripts/multi-chat.py --panel novel-revision --file prompt.txt
 ```
+
+**panels.json / results/ の配置場所**:
+- デフォルト: カレントディレクトリ
+- `--cwd /path/to/project` で指定可能（Hermes Agent 内から実行する場合に推奨）
 
 結果は `results/` ディレクトリにタイムスタンプ付きで保存される。
 

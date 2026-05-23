@@ -2,11 +2,30 @@
 """
 モデル一覧から 2〜5 モデルを選択し、panels.json に保存する。
 
-Usage:
-  python3 select-panel.py                          # 対話選択
-  python3 select-panel.py --name novel-revision    # パネル名指定
-  python3 select-panel.py --list                   # 既存パネル一覧
-  python3 select-panel.py --delete novel-revision  # パネル削除
+使い方:
+  対話選択（人間がターミナルで操作）:
+    python3 select-panel.py --name novel-revision
+
+  非対話選択（エージェントやスクリプトから使用）:
+    python3 select-panel.py --name novel-revision --models "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous,gemini-2.5-flash:google"
+
+  パネル一覧:
+    python3 select-panel.py --list
+
+  パネル削除:
+    python3 select-panel.py --delete novel-revision
+
+  panels.json の直接編集も可能。形式:
+    {
+      "version": 1,
+      "active": "novel-revision",
+      "panels": {
+        "novel-revision": [
+          {"id": "mimo-v2.5-pro", "provider": "opencode-go"},
+          {"id": "deepseek/deepseek-v4-flash", "provider": "nous"}
+        ]
+      }
+    }
 """
 
 import argparse
@@ -17,7 +36,6 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 LIST_MODELS = SKILL_DIR / "scripts" / "list-models.py"
-PANELS_FILE = Path("panels.json")
 
 PROVIDER_ORDER = ["opencode-go", "nous", "openrouter", "google", "xai", "nvidia"]
 PROVIDER_EMOJI = {
@@ -30,31 +48,46 @@ PROVIDER_EMOJI = {
 }
 
 
-def load_panels() -> dict:
-    if PANELS_FILE.exists():
-        return json.loads(PANELS_FILE.read_text())
+def resolve_panels_file(cwd: str | None = None) -> Path:
+    """panels.json のパスを解決。
+    --cwd 指定時はそのディレクトリ、未指定時はカレントディレクトリ。"""
+    if cwd:
+        return Path(cwd) / "panels.json"
+    return Path.cwd() / "panels.json"
+
+
+def load_panels(cwd: str | None = None) -> dict:
+    panels_file = resolve_panels_file(cwd)
+    if panels_file.exists():
+        return json.loads(panels_file.read_text())
     return {"version": 1, "active": None, "panels": {}}
 
 
-def save_panels(data: dict):
-    PANELS_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+def save_panels(data: dict, cwd: str | None = None):
+    panels_file = resolve_panels_file(cwd)
+    panels_file.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def fetch_models() -> list[dict]:
     """list-models.py --json の結果を取得。"""
     r = subprocess.run(
         [sys.executable, str(LIST_MODELS), "--json"],
-        capture_output=True, text=True, timeout=30
+        capture_output=True, text=True, timeout=60
     )
     if r.returncode != 0:
         print("❌ モデル一覧の取得に失敗しました", file=sys.stderr)
+        sys.stderr.write(r.stderr)
         sys.exit(1)
-    # stderr が混ざっている場合を考慮
-    for line in r.stdout.splitlines():
-        line = line.strip()
-        if line.startswith("["):
-            return json.loads(line)
-    return json.loads(r.stdout)
+    # JSON部分を抽出（stderrの進捗メッセージを除外）
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        # stdout内からJSON開始位置を探す
+        for i, line in enumerate(r.stdout.splitlines()):
+            if line.strip().startswith("["):
+                return json.loads("\n".join(r.stdout.splitlines()[i:]))
+        print("❌ モデル一覧のパースに失敗しました", file=sys.stderr)
+        sys.exit(1)
 
 
 def print_model_list(models: list[dict], max_show: int = 50):
@@ -91,7 +124,7 @@ def _fmt(raw) -> str:
 
 
 def interactive_select(models: list[dict]) -> list[dict]:
-    """対話的に 2〜5 モデルを選択。"""
+    """対話的に 2〜5 モデルを選択。人間のターミナル操作専用。"""
     selected = []
     print("\n🎯 モデルを番号で選択してください（2〜5個）。")
     print("   入力例: 1 5 12  または  free で無料のみ表示")
@@ -152,9 +185,9 @@ def interactive_select(models: list[dict]) -> list[dict]:
     return selected
 
 
-def cmd_list():
+def cmd_list(cwd: str | None = None):
     """既存パネル一覧。"""
-    data = load_panels()
+    data = load_panels(cwd)
     panels = data.get("panels", {})
     if not panels:
         print("パネル未登録。`python3 select-panel.py` で作成してください。")
@@ -170,7 +203,63 @@ def cmd_list():
             print(f"   {emoji} `{pid}` @ {pv}")
 
 
-def cmd_select(name: str):
+def cmd_select_from_models(models_str: str, name: str, cwd: str | None = None):
+    """--models 引数からパネルを作成（エージェント・スクリプト用）。
+    
+    models_str 形式: "model_id:provider,model_id:provider,..."
+    例: "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous"
+    """
+    entries = []
+    for pair in models_str.split(","):
+        pair = pair.strip()
+        if ":" in pair:
+            model_id, provider = pair.rsplit(":", 1)
+        else:
+            # provider が省略された場合、list-models.py の結果から推測
+            model_id = pair
+            provider = None
+        entries.append((model_id, provider))
+
+    # provider 未指定のモデルを解決
+    all_models = fetch_models()
+    model_map = {m["id"]: m for m in all_models}
+    
+    panel = []
+    for model_id, provider in entries:
+        if model_id not in model_map:
+            print(f"⚠ モデル '{model_id}' が見つかりません。スキップします。", file=sys.stderr)
+            continue
+        
+        m = model_map[model_id]
+        if provider is None:
+            # 優先順位で provider を自動選択
+            provs = m.get("providers", [])
+            provider = None
+            for p in PROVIDER_ORDER:
+                if p in provs:
+                    provider = p
+                    break
+            if provider is None:
+                provider = provs[0] if provs else "unknown"
+        
+        panel.append({"id": model_id, "provider": provider})
+
+    if len(panel) < 2:
+        print("❌ 最低2モデル必要です。キャンセルしました。", file=sys.stderr)
+        sys.exit(1)
+
+    data = load_panels(cwd)
+    data["panels"][name] = panel
+    data["active"] = name
+    save_panels(data, cwd)
+
+    print(f"\n✅ パネル '{name}' を保存しました（{len(panel)}モデル）")
+    for m in panel:
+        print(f"   {PROVIDER_EMOJI.get(m['provider'],'')} `{m['id']}` @ {m['provider']}")
+    print(f"\n実行: python3 scripts/multi-chat.py --panel {name}")
+
+
+def cmd_select_interactive(name: str, cwd: str | None = None):
     """対話選択して保存。"""
     print("モデル一覧を取得中...", file=sys.stderr)
     models = fetch_models()
@@ -185,9 +274,7 @@ def cmd_select(name: str):
 
     panel = []
     for m in selected:
-        # Google/xAI models → 直API用に provider を解決
         provs = m.get("providers", [])
-        # 優先: opencode-go > nous > openrouter > google > xai
         chosen = None
         for p in PROVIDER_ORDER:
             if p in provs:
@@ -198,10 +285,10 @@ def cmd_select(name: str):
 
         panel.append({"id": m["id"], "provider": chosen})
 
-    data = load_panels()
+    data = load_panels(cwd)
     data["panels"][name] = panel
     data["active"] = name
-    save_panels(data)
+    save_panels(data, cwd)
 
     print(f"\n✅ パネル '{name}' を保存しました（{len(panel)}モデル）")
     for m in panel:
@@ -209,31 +296,40 @@ def cmd_select(name: str):
     print(f"\n実行: python3 scripts/multi-chat.py --panel {name}")
 
 
-def cmd_delete(name: str):
-    data = load_panels()
+def cmd_delete(name: str, cwd: str | None = None):
+    data = load_panels(cwd)
     if name not in data.get("panels", {}):
         print(f"❌ パネル '{name}' は存在しません")
         return
     del data["panels"][name]
     if data.get("active") == name:
         data["active"] = next(iter(data["panels"]), None)
-    save_panels(data)
+    save_panels(data, cwd)
     print(f"🗑 パネル '{name}' を削除しました")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Hermes Fake MoA — モデルパネル選択")
     parser.add_argument("--name", "-n", default="default", help="パネル名")
+    parser.add_argument("--models", "-m", help="非対話モード: 'model:provider,model:provider,...' 形式で直接指定")
     parser.add_argument("--list", "-l", action="store_true", help="既存パネル一覧")
     parser.add_argument("--delete", "-d", help="パネル削除")
+    parser.add_argument("--cwd", "-c", help="panels.json の配置ディレクトリ（未指定時はカレント）")
     args = parser.parse_args()
 
     if args.list:
-        cmd_list()
+        cmd_list(cwd=args.cwd)
     elif args.delete:
-        cmd_delete(args.delete)
+        cmd_delete(args.delete, cwd=args.cwd)
+    elif args.models:
+        cmd_select_from_models(args.models, args.name, cwd=args.cwd)
     else:
-        cmd_select(args.name)
+        # 対話モード（人間のターミナル操作専用）
+        if not sys.stdin.isatty():
+            print("❌ 非対話環境です。--models 引数でモデルを指定してください。", file=sys.stderr)
+            print("例: python3 select-panel.py --name my-panel --models 'mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous'", file=sys.stderr)
+            sys.exit(1)
+        cmd_select_interactive(args.name, cwd=args.cwd)
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ Usage:
   python3 multi-chat.py --panel novel-revision --prompt "質問文"
   python3 multi-chat.py --panel default --file prompt.txt
   python3 multi-chat.py --panel default < prompt.txt
+  python3 multi-chat.py --panel default --file prompt.txt --cwd /path/to/project
 """
 
 import argparse
@@ -16,18 +17,31 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-PANELS_FILE = Path("panels.json")
-RESULTS_DIR = Path("results")
 TIMEOUT = 300  # 1プロセスあたりの最大秒数
-MAX_TURNS = 3  # ツール呼び出し制限（小説レビュー等は少なく）
+MAX_TURNS = 3  # ツール呼び出し制限
 
 
-def load_panel(name: str) -> list[dict]:
+def resolve_panels_file(cwd: str | None = None) -> Path:
+    """panels.json のパスを解決。
+    --cwd 指定時はそのディレクトリ、未指定時はカレントディレクトリ。"""
+    if cwd:
+        return Path(cwd) / "panels.json"
+    return Path.cwd() / "panels.json"
+
+
+def resolve_results_dir(cwd: str | None = None) -> Path:
+    """results/ のパスを解決。"""
+    base = Path(cwd) if cwd else Path.cwd()
+    return base / "results"
+
+
+def load_panel(name: str, cwd: str | None = None) -> list[dict]:
     """panels.json から指定パネルを読み込み。"""
-    if not PANELS_FILE.exists():
-        print(f"❌ {PANELS_FILE} が見つかりません。先に select-panel.py を実行してください。")
+    panels_file = resolve_panels_file(cwd)
+    if not panels_file.exists():
+        print(f"❌ {panels_file} が見つかりません。先に select-panel.py を実行してください。")
         sys.exit(1)
-    data = json.loads(PANELS_FILE.read_text())
+    data = json.loads(panels_file.read_text())
     panels = data.get("panels", {})
     if name not in panels:
         avail = ", ".join(panels.keys()) if panels else "(なし)"
@@ -37,15 +51,16 @@ def load_panel(name: str) -> list[dict]:
 
 
 def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
-    """1モデルに hermes chat -q を投げ、結果を返す。"""
+    """1モデルに hermes chat -q を投げ、結果を返す。
+    
+    subprocess.run のリスト引数を使うため、プロンプトの改行はそのまま渡せる。
+    シェルを経由しないのでエスケープは不要。
+    """
     label = f"[{idx}] {model_id}"
     print(f"🚀 {label} 送信中...", file=sys.stderr)
 
-    # プロンプト内の改行をエスケープ（シェル安全のため1行化）
-    safe_prompt = prompt.replace("\n", "\\n").replace('"', '\\"')
-
     cmd = [
-        "hermes", "chat", "-q", safe_prompt,
+        "hermes", "chat", "-q", prompt,
         "-m", model_id,
         "--provider", provider,
         "-Q", "--yolo",
@@ -135,11 +150,12 @@ def run_parallel(panel: list[dict], prompt: str) -> list[dict]:
     return results
 
 
-def save_results(results: list[dict], panel_name: str, prompt: str):
+def save_results(results: list[dict], panel_name: str, prompt: str, cwd: str | None = None):
     """結果を results/ に保存。"""
-    RESULTS_DIR.mkdir(exist_ok=True)
+    results_dir = resolve_results_dir(cwd)
+    results_dir.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = RESULTS_DIR / f"{panel_name}_{ts}"
+    base = results_dir / f"{panel_name}_{ts}"
 
     # 個別ファイル
     for r in results:
@@ -175,6 +191,7 @@ def main():
     parser.add_argument("--panel", "-p", required=True, help="パネル名")
     parser.add_argument("--prompt", "-q", help="プロンプト文字列")
     parser.add_argument("--file", "-f", help="プロンプトファイル")
+    parser.add_argument("--cwd", "-c", help="panels.json / results/ の配置ディレクトリ（未指定時はカレント）")
     parser.add_argument("--max-turns", type=int, default=MAX_TURNS, help="ツール呼び出し上限")
     parser.add_argument("--timeout", type=int, default=TIMEOUT, help="タイムアウト秒数")
     args = parser.parse_args()
@@ -197,7 +214,7 @@ def main():
         print("❌ プロンプトが空です")
         sys.exit(1)
 
-    panel = load_panel(args.panel)
+    panel = load_panel(args.panel, cwd=args.cwd)
 
     print(f"\n📡 Fake MoA: {args.panel} ({len(panel)}モデル)\n", file=sys.stderr)
     for m in panel:
@@ -205,7 +222,7 @@ def main():
     print(file=sys.stderr)
 
     results = run_parallel(panel, prompt)
-    base = save_results(results, args.panel, prompt)
+    base = save_results(results, args.panel, prompt, cwd=args.cwd)
 
     # 標準出力にサマリー
     print(f"\n{'='*60}")
