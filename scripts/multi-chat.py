@@ -51,7 +51,6 @@ def load_panel(name: str, cwd: str | None = None) -> list[dict]:
 
 
 def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
-def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
     """1モデルに hermes chat -q を投げ、結果を返す。
     
     subprocess.run のリスト引数を使うため、プロンプトの改行はそのまま渡せる。
