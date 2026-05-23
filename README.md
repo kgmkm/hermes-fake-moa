@@ -6,8 +6,8 @@ Multi-LLM parallel orchestrator for Hermes Agent — 複数 LLM に同一プロ�
 
 ## 特徴
 
-- **9プロバイダ対応**: OpenCode Go / Nous Portal / OpenRouter / Google AI Studio / Gemini OAuth / xAI Grok / NVIDIA NIM / Ollama Cloud / LM Studio
-- **500+モデル**: 全プロバイダの利用可能モデルを一覧化（テキスト生成モデルのみ）
+- **12プロバイダ対応**: OpenCode Go / Nous Portal / OpenRouter / Google AI Studio / Gemini OAuth / xAI Grok / NVIDIA NIM / Ollama Cloud / LM Studio / GitHub Copilot / HuggingFace / OpenAI Codex
+- **600+モデル**: 全プロバイダの利用可能モデルを一覧化（テキスト生成モデルのみ）
 - **free/paid 表示**: 無料モデル159種を明示
 - **パネル選択**: 2〜5モデルを選んで設定保存
 - **並列送信**: 同一プロンプトを全モデルに同時送信、結果を集約
@@ -85,6 +85,9 @@ Hermes Agent の組み込み `mixture_of_agents` ツールは以下の制約が�
 | nvidia | `プロバイダ/モデル名` | `deepseek-ai/deepseek-v4-flash` |
 | ollama-cloud | `model:tag` | `deepseek-v4-flash`, `gemma4:31b` |
 | lmstudio | `モデル名`（そのまま） | `qwen3.6-27b-uncensored-hauhaucs-balanced` |
+| copilot | `モデル名`（そのまま） | `gpt-4o`, `claude-sonnet-4.6` |
+| huggingface | `owner/model` | `deepseek-ai/DeepSeek-V4-Flash` |
+| openai-codex | `モデル名`（そのまま） | `gpt-5`, `o4-mini`（プラン依存） |
 
 **404エラーが出た場合、モデル名の形式が誤っている可能性が高い。** `list-models.py` で正しい ID を確認すること。
 
@@ -139,6 +142,9 @@ git clone https://github.com/kgmkm/hermes-fake-moa.git ~/.hermes/skills/hermes-f
 | NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY` | 123 |
 | Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | 39 |
 | LM Studio | `lmstudio` | 不要（ローカル） | ユーザ依存 |
+| GitHub Copilot | `copilot` | GH_TOKEN (gh CLI) | 22 |
+| HuggingFace | `huggingface` | `HF_TOKEN` | 128 |
+| OpenAI Codex | `openai-codex` | OAuth | ChatGPT Plus/Pro要 |
 
 ## ライセンス
 

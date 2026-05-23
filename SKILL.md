@@ -32,6 +32,9 @@ tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 | NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY` | 123モデル、無料枠あり |
 | Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | 39モデル、ollama.com/v1 |
 | LM Studio | `lmstudio` | 不要（ローカル） | ローカルモデル、port 1234 |
+| GitHub Copilot | `copilot` | GH_TOKEN (gh CLI) | 22モデル、reasoning effort対応 |
+| HuggingFace | `huggingface` | `HF_TOKEN` | 128モデル、Inference Providers |
+| OpenAI Codex | `openai-codex` | OAuth | ChatGPT Plus/Pro要、reasoning effort対応 |
 
 ## ワークフロー
 

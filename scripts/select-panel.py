@@ -37,17 +37,11 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 LIST_MODELS = SKILL_DIR / "scripts" / "list-models.py"
 
-PROVIDER_ORDER = ["opencode-go", "nous", "openrouter", "google", "gemini-cli", "xai", "nvidia", "ollama-cloud", "lmstudio"]
+PROVIDER_ORDER = ["opencode-go", "nous", "openrouter", "google", "gemini-cli", "xai", "nvidia", "ollama-cloud", "lmstudio", "copilot", "huggingface", "openai-codex"]
 PROVIDER_EMOJI = {
-    "opencode-go": "🟢",
-    "nous": "🔵",
-    "openrouter": "🟠",
-    "google": "🟣",
-    "gemini-cli": "💎",
-    "xai": "⚫",
-    "nvidia": "🟤",
-    "ollama-cloud": "🦙",
-    "lmstudio": "🏠",
+    "opencode-go": "🟢", "nous": "🔵", "openrouter": "🟠", "google": "🟣",
+    "gemini-cli": "💎", "xai": "⚫", "nvidia": "🟤", "ollama-cloud": "🦙",
+    "lmstudio": "🏠", "copilot": "🐙", "huggingface": "🤗", "openai-codex": "🔷",
 }
 
 
