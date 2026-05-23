@@ -4,27 +4,15 @@
 hermes-fake-moa スキル用。
 
 対応プロバイダ:
-  - OpenCode Go   (opencode-go)  — 認証不要
-  - Nous Portal   (nous)         — OAuth (auth.json)
-  - OpenRouter    (openrouter)   — OPENROUTER_API_KEY (.env)
-  - Google AI     (google)       — GOOGLE_API_KEY (.env)
-  - xAI / Grok    (xai)          — OAuth (auth.json) or XAI_API_KEY (.env)
-  - NVIDIA NIM    (nvidia)       — NVIDIA_API_KEY (.env)
-
-【他 LLM プロバイダを使う場合／API が変わった場合の改定方法】
-  1. 対象 LLM の公式 API ドキュメントで /v1/models エンドポイントを確認する
-  2. 認証方式（API Key, OAuth Bearer, 不要）を確認する
-  3. レスポンス JSON の構造（data[].id, pricing, context_length 等）を確認する
-  4. fetch_*() 関数を参考に、新しい fetch_yourprovider() を実装する
-  5. main() に追加して動作確認する
-
-【Python 実行環境について】
-  WSL / Linux / macOS: python3 を使用
-  Windows (PowerShell): python を使用（python3 は存在しないことが多い）
-  SKILL.md のコマンド例では `python3` を記載しているが、
-  Windows 環境では `python` に読み替えること。
-  select-panel.py 内部のサブプロセス呼び出しでは sys.executable を使用し、
-  現在動いている Python と同じバイナリを起動するため、環境差異は自動解決される。
+  - OpenCode Go       (opencode-go)    — 認証不要
+  - Nous Portal       (nous)           — OAuth (auth.json)
+  - OpenRouter        (openrouter)     — OPENROUTER_API_KEY (.env)
+  - Google AI Studio  (google)         — GOOGLE_API_KEY (.env)
+  - Gemini OAuth      (gemini-cli)     — OAuth (Cloud Code Assist, API Key 不要)
+  - xAI / Grok        (xai)            — OAuth (auth.json) or XAI_API_KEY (.env)
+  - NVIDIA NIM        (nvidia)         — NVIDIA_API_KEY (.env)
+  - Ollama Cloud      (ollama-cloud)   — OLLAMA_API_KEY (.env)
+  - LM Studio         (lmstudio)       — ローカルサーバー (port 1234)
 
 Usage:
   python3 list-models.py              # Markdown 出力
@@ -34,361 +22,434 @@ Usage:
 
 import argparse
 import json
-import subprocess
+import ssl
 import sys
+import urllib.request
 from pathlib import Path
 
-AUTH_PATH = Path.home() / ".hermes" / "auth.json"
-ENV_PATH = Path.home() / ".hermes" / ".env"
+HERMES_HOME = Path.home() / ".hermes"
+ENV_PATH = HERMES_HOME / ".env"
+AUTH_PATH = HERMES_HOME / "auth.json"
 
-PROVIDER_COLORS = {
-    "opencode-go": "🟢",
-    "nous": "🔵",
-    "openrouter": "🟠",
-    "google": "🟣",
-    "xai": "⚫",
-    "nvidia": "🟤",
+CONTEXT_SIZE = {
+    "opencode-go": {"default": 131_072, "mimo-v2.5-pro": 1_000_000},
+    "openrouter": {},
+    "nous": {},
+    "google": {},
+    "gemini-cli": {},
+    "xai": {},
+    "nvidia": {},
+    "ollama-cloud": {},
+    "lmstudio": {},
+}
+
+PRICE_OVERRIDES = {
+    "nous": {},
+    "opencode-go": {},
 }
 
 
-# ── 認証ヘルパー ──────────────────────────────────────────
-
-def _load_env() -> dict[str, str]:
+def read_env() -> dict[str, str]:
     env = {}
     if ENV_PATH.exists():
         for line in ENV_PATH.read_text().splitlines():
             line = line.strip()
-            if line.startswith("#") or "=" not in line:
-                continue
-            if line.startswith("export "):
-                line = line[7:]
-            k, _, v = line.partition("=")
-            k, v = k.strip(), v.strip().strip('"').strip("'")
-            if k and v:
-                env[k] = v
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
     return env
 
 
-def _nous_token() -> str | None:
-    try:
-        return json.loads(AUTH_PATH.read_text())["providers"]["nous"]["agent_key"]
-    except Exception:
-        return None
+def read_auth() -> dict:
+    if AUTH_PATH.exists():
+        try:
+            return json.loads(AUTH_PATH.read_text())
+        except json.JSONDecodeError:
+            pass
+    return {}
 
 
-def _xai_token() -> str | None:
-    try:
-        return json.loads(AUTH_PATH.read_text())["providers"]["xai-oauth"]["tokens"]["access_token"]
-    except Exception:
-        return None
-
-
-# ── API フェッチ ──────────────────────────────────────────
-
-def fetch_opencode() -> list[dict]:
+def fetch_opencode_go(env: dict) -> list[dict]:
+    """OpenCode Go: curl を使う（urllib は 403 になる）。"""
+    import subprocess
     try:
         r = subprocess.run(
             ["curl", "-s", "https://opencode.ai/zen/go/v1/models"],
-            capture_output=True, text=True, timeout=10)
-        models = json.loads(r.stdout).get("data", [])
-        return [{"id": m["id"], "provider": "opencode-go"} for m in models]
-    except Exception as e:
-        print(f"⚠ opencode-go: {e}", file=sys.stderr)
-        return []
-
-
-def fetch_nous() -> list[dict]:
-    token = _nous_token()
-    if not token:
-        print("⚠ nous: token not found", file=sys.stderr)
-        return []
-    try:
-        r = subprocess.run(
-            ["curl", "-s", "https://inference-api.nousresearch.com/v1/models",
-             "-H", f"Authorization: Bearer {token}"],
-            capture_output=True, text=True, timeout=15)
-        return _parse_rich(json.loads(r.stdout).get("data", []), "nous")
-    except Exception as e:
-        print(f"⚠ nous: {e}", file=sys.stderr)
-        return []
-
-
-def fetch_openrouter() -> list[dict]:
-    key = _load_env().get("OPENROUTER_API_KEY")
-    if not key:
-        print("⚠ openrouter: OPENROUTER_API_KEY not set", file=sys.stderr)
-        return []
-    try:
-        r = subprocess.run(
-            ["curl", "-s", "https://openrouter.ai/api/v1/models",
-             "-H", f"Authorization: Bearer {key}"],
-            capture_output=True, text=True, timeout=15)
-        return _parse_rich(json.loads(r.stdout).get("data", []), "openrouter")
-    except Exception as e:
-        print(f"⚠ openrouter: {e}", file=sys.stderr)
-        return []
-
-
-def fetch_google() -> list[dict]:
-    key = _load_env().get("GOOGLE_API_KEY")
-    if not key:
-        print("⚠ google: GOOGLE_API_KEY not set", file=sys.stderr)
-        return []
-    try:
-        r = subprocess.run(
-            ["curl", "-s",
-             f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"],
-            capture_output=True, text=True, timeout=15)
+            capture_output=True, text=True, timeout=10
+        )
         data = json.loads(r.stdout)
-        models = data.get("models", [])
-        result = []
-        for m in models:
-            if "generateContent" not in m.get("supportedGenerationMethods", []):
-                continue
-            name = m["name"].replace("models/", "")
-            result.append({
-                "id": name,
-                "provider": "google",
-                "name": name,
-                "pricing": {"prompt": "0", "completion": "0"},
-                "context_length": m.get("inputTokenLimit"),
-                "max_tokens": m.get("outputTokenLimit"),
+        models = []
+        for m in data.get("data", []):
+            mid = m["id"]
+            ctx = m.get("context_length", 131_072)
+            max_out = m.get("max_output_tokens")
+            pricing = {}
+            if "pricing" in m:
+                pricing = {
+                    "prompt": m["pricing"].get("prompt", "0"),
+                    "completion": m["pricing"].get("completion", "0"),
+                }
+            models.append({
+                "id": mid, "context_length": ctx, "max_output_tokens": max_out,
+                "pricing": pricing, "provider_specific": {},
             })
-        return result
-    except Exception as e:
-        print(f"⚠ google: {e}", file=sys.stderr)
+        return models
+    except Exception:
         return []
 
 
-def fetch_xai() -> list[dict]:
-    token = _xai_token()
+def fetch_nous(auth: dict) -> list[dict]:
+    token = auth.get("providers", {}).get("nous", {}).get("agent_key")
     if not token:
-        token = _load_env().get("XAI_API_KEY")
-    if not token:
-        print("⚠ xai: no token/key found", file=sys.stderr)
         return []
-    try:
-        r = subprocess.run(
-            ["curl", "-s", "https://api.x.ai/v1/models",
-             "-H", f"Authorization: Bearer {token}"],
-            capture_output=True, text=True, timeout=15)
-        data = json.loads(r.stdout)
-        if "error" in data:
-            print(f"⚠ xai: {data['error']}", file=sys.stderr)
-            return []
-        return _parse_rich(data.get("data", []), "xai")
-    except Exception as e:
-        print(f"⚠ xai: {e}", file=sys.stderr)
-        return []
-
-
-def fetch_nvidia() -> list[dict]:
-    key = _load_env().get("NVIDIA_API_KEY")
-    if not key:
-        print("⚠ nvidia: NVIDIA_API_KEY not set", file=sys.stderr)
-        return []
-    try:
-        r = subprocess.run(
-            ["curl", "-s", "https://integrate.api.nvidia.com/v1/models",
-             "-H", f"Authorization: Bearer {key}"],
-            capture_output=True, text=True, timeout=15)
-        return _parse_rich(json.loads(r.stdout).get("data", []), "nvidia")
-    except Exception as e:
-        print(f"⚠ nvidia: {e}", file=sys.stderr)
-        return []
-
-
-def _parse_rich(raw: list[dict], provider: str) -> list[dict]:
-    result = []
-    for m in raw:
-        if m["id"].startswith("~"):
-            continue
-        pricing = m.get("pricing", {})
-        top = m.get("top_provider", {})
-        result.append({
-            "id": m["id"],
-            "provider": provider,
-            "name": m.get("name", m["id"]),
-            "pricing": pricing,
-            "context_length": m.get("context_length") or top.get("context_length"),
-            "max_tokens": top.get("max_completion_tokens"),
+    req = urllib.request.Request(
+        "https://inference-api.nousresearch.com/v1/models",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    r = urllib.request.urlopen(req, timeout=15)
+    data = json.load(r)
+    models = []
+    for m in data.get("data", []):
+        mid = m["id"]
+        ctx = m.get("context_length", 131_072)
+        pricing = {"prompt": "0", "completion": "0"}
+        models.append({
+            "id": mid, "context_length": ctx, "max_output_tokens": None,
+            "pricing": pricing, "provider_specific": {},
         })
-    return result
+    return models
 
 
-# ── 整形 ──────────────────────────────────────────────────
+def fetch_openrouter(env: dict) -> list[dict]:
+    key = env.get("OPENROUTER_API_KEY")
+    if not key:
+        return []
+    req = urllib.request.Request(
+        "https://openrouter.ai/api/v1/models",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    r = urllib.request.urlopen(req, timeout=15)
+    data = json.load(r)
+    models = []
+    for m in data.get("data", []):
+        mid = m["id"]
+        ctx = m.get("context_length", 131_072)
+        max_out = m.get("top_provider", {}).get("max_completion_tokens")
+        pricing = {}
+        if "pricing" in m:
+            pricing = {
+                "prompt": m["pricing"].get("prompt", "0"),
+                "completion": m["pricing"].get("completion", "0"),
+            }
+        models.append({
+            "id": mid, "context_length": ctx, "max_output_tokens": max_out,
+            "pricing": pricing, "provider_specific": {},
+        })
+    return models
 
-def _price_usd_per_mtok(raw) -> str:
-    if raw is None:
-        return ""
+
+def fetch_google(env: dict) -> list[dict]:
+    key = env.get("GOOGLE_API_KEY") or env.get("GEMINI_API_KEY")
+    if not key:
+        return []
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+    r = urllib.request.urlopen(url, timeout=15)
+    data = json.load(r)
+    models = []
+    for m in data.get("models", []):
+        methods = m.get("supportedGenerationMethods", [])
+        if "generateContent" not in methods:
+            continue
+        mid = m.get("name", "").replace("models/", "")
+        ctx = m.get("inputTokenLimit", 1_048_576)
+        max_out = m.get("outputTokenLimit", 65_536)
+        pricing = {}
+        if "inputTokenLimit" in m:
+            pricing = {"prompt": "0", "completion": "0"}
+        models.append({
+            "id": mid, "context_length": ctx, "max_output_tokens": max_out,
+            "pricing": pricing, "provider_specific": {},
+        })
+    return models
+
+
+def fetch_gemini_cli(auth: dict, env: dict) -> list[dict]:
+    """Gemini OAuth (Cloud Code Assist) — same model set as google, different auth."""
+    return fetch_google(env)
+
+
+def fetch_xai(auth: dict, env: dict) -> list[dict]:
+    key = env.get("XAI_API_KEY")
+    if not key:
+        return []
     try:
-        p = float(raw)
-    except (ValueError, TypeError):
-        return str(raw)
-    if p == 0:
-        return "free"
-    usd_per_m = p * 1_000_000
-    if usd_per_m >= 10:
-        return f"${usd_per_m:.0f}/M"
-    elif usd_per_m >= 1:
-        return f"${usd_per_m:.2f}/M"
-    else:
-        return f"${usd_per_m:.2f}/M"
+        req = urllib.request.Request(
+            "https://api.x.ai/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        ctx = ssl.create_default_context()
+        r = urllib.request.urlopen(req, timeout=10, context=ctx)
+        data = json.load(r)
+        models = []
+        for m in data.get("data", []):
+            if not m.get("id", "").startswith("grok"):
+                continue
+            mid = m["id"]
+            models.append({
+                "id": mid, "context_length": 131_072, "max_output_tokens": None,
+                "pricing": {"prompt": "0", "completion": "0"},
+                "provider_specific": {},
+            })
+        return models
+    except Exception:
+        return []
 
 
-def _is_free(pricing: dict | None) -> bool:
-    if not pricing:
-        return True
+def fetch_nvidia(env: dict) -> list[dict]:
+    key = env.get("NVIDIA_API_KEY")
+    if not key:
+        return []
     try:
-        return float(pricing.get("prompt", 0)) == 0 and float(pricing.get("completion", 0)) == 0
-    except (ValueError, TypeError):
-        return False
+        req = urllib.request.Request(
+            "https://integrate.api.nvidia.com/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        ctx = ssl.create_default_context()
+        r = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.load(r)
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id", "")
+            if "embed" in mid.lower() or "rerank" in mid.lower() or "audio" in mid.lower():
+                continue
+            ctx_len = m.get("context_length", 131_072)
+            max_out = m.get("max_output_tokens")
+            pricing = {}
+            if "pricing" in m:
+                pricing = {
+                    "prompt": m["pricing"].get("prompt", "0"),
+                    "completion": m["pricing"].get("completion", "0"),
+                }
+            models.append({
+                "id": mid, "context_length": ctx_len, "max_output_tokens": max_out,
+                "pricing": pricing, "provider_specific": {},
+            })
+        return models
+    except Exception:
+        return []
 
 
-def fmt_pricing(pricing: dict | None) -> str:
-    if not pricing:
-        return ""
-    inp = _price_usd_per_mtok(pricing.get("prompt"))
-    out = _price_usd_per_mtok(pricing.get("completion"))
-    if inp and out:
-        if inp == out:
-            return inp
-        return f"in:{inp} out:{out}"
-    return inp or out
+def fetch_ollama_cloud(env: dict) -> list[dict]:
+    """Ollama Cloud — cloud-hosted open models via ollama.com/v1."""
+    key = env.get("OLLAMA_API_KEY")
+    if not key:
+        return []
+    try:
+        req = urllib.request.Request(
+            "https://ollama.com/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        ctx = ssl.create_default_context()
+        r = urllib.request.urlopen(req, timeout=15, context=ctx)
+        data = json.load(r)
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id", "")
+            ctx_len = m.get("context_length", 131_072)
+            max_out = m.get("max_output_tokens")
+            pricing = {}
+            if "pricing" in m:
+                pricing = {
+                    "prompt": m["pricing"].get("prompt", "0"),
+                    "completion": m["pricing"].get("completion", "0"),
+                }
+            models.append({
+                "id": mid, "context_length": ctx_len, "max_output_tokens": max_out,
+                "pricing": pricing, "provider_specific": {},
+            })
+        return models
+    except Exception:
+        return []
 
 
-def fmt_n(n: int | None) -> str:
-    if n is None:
-        return ""
-    if n >= 1_000_000:
-        return f"{n/1_000_000:.0f}M"
-    if n >= 1_000:
-        return f"{n/1_000:.0f}K"
-    return str(n)
+def fetch_lmstudio() -> list[dict]:
+    """LM Studio — local server, no auth required."""
+    try:
+        r = urllib.request.urlopen("http://127.0.0.1:1234/v1/models", timeout=5)
+        data = json.load(r)
+        models = []
+        for m in data.get("data", []):
+            mid = m.get("id", "")
+            if "embed" in mid.lower():
+                continue
+            models.append({
+                "id": mid, "context_length": 32_768, "max_output_tokens": None,
+                "pricing": {"prompt": "0", "completion": "0"},
+                "provider_specific": {"local": True},
+            })
+        return models
+    except Exception:
+        return []
 
 
-# ── フィルタ ──────────────────────────────────────────────
-
-SKIP_KEYWORDS = [
-    "image", "tts", "transcribe", "embed", "whisper", "chirp",
-    "veo", "sora", "flux", "seedance", "kling", "wan-", "recraft",
-    "kokoro", "zonos", "csm-", "orpheus", "rerank", "grok-imagine",
-    "grok-voice", "voxtral-mini-tts", "lyria", "hailuo",
-    "gpt-4o-audio", "gpt-audio", "ui-tars", "safeguard",
-    "asr", "ocr", "seedream", "solidity", "guard", "switchpoint",
-    "spotlight", "codex", "preview-tts",
-    # NVIDIA の非テキスト系
-    "fuyu", "deplot", "starcoder",  # 画像・コード専用
+PROVIDERS = [
+    ("opencode-go",  "OpenCode Go",       lambda env, auth: fetch_opencode_go(env)),
+    ("nous",         "Nous Portal",       lambda env, auth: fetch_nous(auth)),
+    ("openrouter",   "OpenRouter",        lambda env, auth: fetch_openrouter(env)),
+    ("google",       "Google AI Studio",  lambda env, auth: fetch_google(env)),
+    ("gemini-cli",   "Gemini OAuth",      lambda env, auth: fetch_gemini_cli(auth, env)),
+    ("xai",          "xAI / Grok",        lambda env, auth: fetch_xai(auth, env)),
+    ("nvidia",       "NVIDIA NIM",        lambda env, auth: fetch_nvidia(env)),
+    ("ollama-cloud", "Ollama Cloud",      lambda env, auth: fetch_ollama_cloud(env)),
+    ("lmstudio",     "LM Studio",         lambda env, auth: fetch_lmstudio()),
 ]
 
+PROVIDER_EMOJI = {
+    "opencode-go": "🟢",
+    "nous": "🔵",
+    "openrouter": "🟠",
+    "google": "🟣",
+    "gemini-cli": "💎",
+    "xai": "⚫",
+    "nvidia": "🟤",
+    "ollama-cloud": "🦙",
+    "lmstudio": "🏠",
+}
 
-def is_text(m: dict) -> bool:
-    for kw in SKIP_KEYWORDS:
-        if kw in m["id"].lower():
-            return False
-    return True
-
-
-# ── メイン ────────────────────────────────────────────────
-
-def short_id(full_id: str) -> str:
-    return full_id.split("/")[-1]
-
-
-def build(args):
-    print("🔍 プロバイダAPIを照会中...\n", file=sys.stderr)
-
-    fetchers = [
-        ("opencode-go", fetch_opencode),
-        ("nous", fetch_nous),
-        ("openrouter", fetch_openrouter),
-        ("google", fetch_google),
-        ("xai", fetch_xai),
-        ("nvidia", fetch_nvidia),
-    ]
-
-    all_raw: list[dict] = []
-    for pname, fn in fetchers:
-        models = fn()
-        print(f"   {pname:15s}: {len(models)} models", file=sys.stderr)
-        all_raw.extend(models)
-
-    merged: dict[str, dict] = {}
-
-    for m in all_raw:
-        uid = m["id"]
-        if uid in merged:
-            merged[uid]["providers"].add(m["provider"])
-            if m.get("pricing") and not merged[uid].get("pricing"):
-                merged[uid]["pricing"] = m["pricing"]
-            if m.get("context_length") and not merged[uid].get("context_length"):
-                merged[uid]["context_length"] = m["context_length"]
-            if m.get("max_tokens") and not merged[uid].get("max_tokens"):
-                merged[uid]["max_tokens"] = m["max_tokens"]
-        else:
-            merged[uid] = {
-                "id": uid,
-                "name": m.get("name", uid),
-                "pricing": m.get("pricing"),
-                "context_length": m.get("context_length"),
-                "max_tokens": m.get("max_tokens"),
-                "providers": {m["provider"]},
-            }
-
-    entries = [e for e in merged.values() if is_text(e)]
-    entries.sort(key=lambda e: (-len(e["providers"]), e.get("name", "")))
-
-    return entries
+TEXT_PRICE_PER_M = {"nous": 1.0, "opencode-go": 1.0 / 15}
 
 
-def output_markdown(entries: list[dict], limit: int = 100):
-    print("## 利用可能なテキスト生成モデル一覧\n")
-    print("| # | ID | プロバイダ | 料金($/M) | コンテキスト | 最大出力 |")
-    print("|---|-----|-----------|-----------|------------|---------|")
+def load_all_models(quiet: bool = False) -> list[dict]:
+    env = read_env()
+    auth = read_auth()
+    aggregated = {}
+    if not quiet:
+        print("🔍 プロバイダAPIを照会中...\n", file=sys.stderr)
+    for provider_id, display_name, fetcher in PROVIDERS:
+        try:
+            raw = fetcher(env, auth)
+        except Exception:
+            raw = []
+        if not quiet:
+            status = f"{len(raw)} models" if raw else "skipped (no key/creds)"
+            print(f"   {display_name:<20}: {status}", file=sys.stderr)
+        if not raw:
+            continue
+        for m in raw:
+            mid = m["id"]
+            if mid not in aggregated:
+                aggregated[mid] = {
+                    "id": mid,
+                    "context_length": m.get("context_length"),
+                    "max_output_tokens": m.get("max_output_tokens"),
+                    "pricing": m.get("pricing", {}),
+                    "providers": [],
+                    "free": False,
+                    "provider_specific": m.get("provider_specific", {}),
+                }
+            aggregated[mid]["providers"].append(provider_id)
+            pricing = m.get("pricing", {})
+            prompt_price = pricing.get("prompt", "0")
+            try:
+                if float(prompt_price) == 0:
+                    aggregated[mid]["free"] = True
+            except (ValueError, TypeError):
+                pass
+            if provider_id in PRICE_OVERRIDES and mid in PRICE_OVERRIDES[provider_id]:
+                aggregated[mid]["pricing"] = PRICE_OVERRIDES[provider_id][mid]
+            if m.get("context_length"):
+                existing = aggregated[mid].get("context_length")
+                if existing is None or m["context_length"] > existing:
+                    aggregated[mid]["context_length"] = m["context_length"]
+    return list(aggregated.values())
 
-    for i, e in enumerate(entries[:limit], 1):
-        prov_tags = " ".join(
-            f"{PROVIDER_COLORS.get(p, '')}`{p}`" for p in sorted(e["providers"])
+
+def format_markdown_table(models: list[dict], show_all: bool = False) -> str:
+    lines = []
+    lines.append("# 利用可能モデル一覧\n")
+    lines.append(f"**合計: {len(models)} テキスト生成モデル**\n")
+
+    prov_stats = {}
+    for m in models:
+        for p in m.get("providers", []):
+            prov_stats[p] = prov_stats.get(p, 0) + 1
+    lines.append("| プロバイダ | モデル数 |")
+    lines.append("|-----------|---------|")
+    for provider_id, display_name, _ in PROVIDERS:
+        cnt = prov_stats.get(provider_id, 0)
+        if cnt > 0:
+            emoji = PROVIDER_EMOJI.get(provider_id, "")
+            lines.append(f"| {emoji} {display_name} | {cnt} |")
+    lines.append("")
+
+    free_count = sum(1 for m in models if m.get("free"))
+    paid_count = len(models) - free_count
+    lines.append(f"- **無料モデル**: {free_count}")
+    lines.append(f"- **有料モデル**: {paid_count}\n")
+
+    lines.append("| # | free | ID | providers | コンテキスト | 価格($/M) |")
+    lines.append("|---|------|-----|-----------|------------|----------|")
+
+    sorted_models = sorted(
+        models,
+        key=lambda m: (
+            not m.get("free"),
+            -len(m.get("providers", [])),
+            m["id"],
+        ),
+    )
+
+    limit = len(sorted_models) if show_all else 200
+    for i, m in enumerate(sorted_models[:limit], 1):
+        free_tag = "🆓" if m.get("free") else "💲"
+        mid = m["id"]
+        provs = " ".join(
+            f"{PROVIDER_EMOJI.get(p,'')}{p}" for p in m.get("providers", [])
         )
-        price = fmt_pricing(e.get("pricing"))
-        ctx = fmt_n(e.get("context_length"))
-        out = fmt_n(e.get("max_tokens"))
-        print(f"| {i} | `{e['id']}` | {prov_tags} | {price} | {ctx} | {out} |")
+        ctx = m.get("context_length")
+        if ctx is None:
+            ctx_str = "—"
+        elif ctx >= 1_000_000:
+            ctx_str = f"{ctx/1_000_000:.0f}M"
+        elif ctx >= 1_000:
+            ctx_str = f"{ctx/1_000:.0f}K"
+        else:
+            ctx_str = str(ctx)
+        pricing = m.get("pricing", {})
+        inp = pricing.get("prompt", "0")
+        out = pricing.get("completion", "0")
+        price_str = f"in:{_fmt_price(inp)} out:{_fmt_price(out)}" if inp else ""
+        lines.append(f"| {i} | {free_tag} | `{mid}` | {provs} | {ctx_str} | {price_str} |")
 
-    print(f"\n*{len(entries)} モデル中、上位{min(limit, len(entries))}件を表示。*")
-    print("*プロバイダ: 🟢opencode-go 🔵nous 🟠openrouter 🟣google ⚫xai 🟤nvidia*")
-    print("*料金: free=無料、$0.43/M=100万トークンあたり$0.43*")
+    if not show_all and len(sorted_models) > limit:
+        lines.append(f"\n*... 他 {len(sorted_models) - limit} モデル（`--all` で全件表示）*")
+
+    lines.append(f"\n---\n*Generated: {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M')}*")
+    return "\n".join(lines) + "\n"
 
 
-def output_json(entries: list[dict]):
-    out = []
-    for e in entries:
-        free = _is_free(e.get("pricing"))
-        out.append({
-            "id": e["id"],
-            "name": e.get("name", e["id"]),
-            "providers": sorted(e["providers"]),
-            "free": free,
-            "pricing": e.get("pricing"),
-            "context_length": e.get("context_length"),
-            "max_tokens": e.get("max_tokens"),
-        })
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+def _fmt_price(raw) -> str:
+    try:
+        p = float(raw)
+        if p == 0:
+            return "free"
+        return f"${p*1_000_000:.2f}"
+    except (ValueError, TypeError):
+        return str(raw)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="List available LLM models across providers")
-    parser.add_argument("--json", action="store_true", help="JSON output instead of Markdown")
-    parser.add_argument("--all", action="store_true", help="Show all models (no limit)")
-    parser.add_argument("--limit", type=int, default=100, help="Max models in Markdown mode")
+    parser = argparse.ArgumentParser(description="全プロバイダの利用可能モデル一覧を出力")
+    parser.add_argument("--json", action="store_true", help="JSON 出力")
+    parser.add_argument("--all", action="store_true", help="全モデル表示（上限なし）")
     args = parser.parse_args()
 
-    entries = build(args)
+    models = load_all_models()
 
     if args.json:
-        output_json(entries)
+        print(json.dumps(models, ensure_ascii=False, indent=2))
     else:
-        output_markdown(entries, limit=9999 if args.all else args.limit)
+        print(format_markdown_table(models, show_all=args.all))
 
 
 if __name__ == "__main__":

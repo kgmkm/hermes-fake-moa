@@ -27,8 +27,11 @@ tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 | Nous Portal | `nous` | OAuth | 250+モデル、free枠あり |
 | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 350モデル、従量課金 |
 | Google AI Studio | `google` | `GOOGLE_API_KEY` | 35モデル、無料枠あり |
+| Gemini OAuth | `gemini-cli` | OAuth (Code Assist) | 35モデル、OAuth認証でAPI Key不要 |
 | xAI / Grok | `xai` | `XAI_API_KEY` | 8モデル、課金要 |
 | NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY` | 123モデル、無料枠あり |
+| Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | 39モデル、ollama.com/v1 |
+| LM Studio | `lmstudio` | 不要（ローカル） | ローカルモデル、port 1234 |
 
 ## ワークフロー
 
