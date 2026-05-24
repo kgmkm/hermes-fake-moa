@@ -1,7 +1,7 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.0.0
+version: 1.1.0
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 
@@ -51,12 +51,21 @@ JSON 出力も可能:
 python3 scripts/list-models.py --json > models.json
 ```
 
-### Step 2: パネル（モデルセット）の選択
+### Step 2: どのプロバイダ/モデルを使うかユーザに相談
 
-**対話モード**（人間がターミナルで操作）:
-```bash
-python3 scripts/select-panel.py --name novel-revision
-```
+必ずユーザに、models.md を読むことと、そこからMoAとして使いたいプロバイダ/モデルを３～５つ選ぶよう伝える。
+その上で、モデルの違いが分かりづらいユーザもいるため、おすすめプロバイダ/モデルも３つほど提案する。
+
+提案の条件は以下。
+
+**おすすめプロバイダ/モデル選定基準** :
+- 定額で使えるプロバイダ（opencode go, Ollama Cloud, codex, claude codeなど）のフラグシップorミッドシップモデル
+- クレジット型課金だが比較的安価で新しいモデル
+- 無料で使えてコンテキストも長めなモデル
+
+なお、エージェント側で勝手にモデルを選び、選定して送信してはならない。勝手にユーザのクレジットを使う事は責任問題につながる。
+
+### Step 3: パネル（モデルセット）の選択
 
 **非対話モード**（エージェント・スクリプトから使用）:
 ```bash
@@ -80,7 +89,7 @@ python3 scripts/select-panel.py --name novel-revision \
 }
 ```
 
-### Step 3: 並列送信
+### Step 4: 並列送信
 
 ```bash
 python3 scripts/multi-chat.py --panel novel-revision --prompt "あなたの質問"
@@ -102,14 +111,6 @@ python3 scripts/multi-chat.py --panel novel-revision --file prompt.txt
 各モデルの回答は個別ファイルに保存され、サマリーが標準出力に表示される。
 複数モデルが共通して指摘した項目は特に重要。
 
-## 制限事項
-
-- Hermes Agent 内部からの実行に限る（`hermes chat -q` に依存）
-- 最大5モデルまで同時実行
-- Nous Portal の有料モデルはクレジット要
-- xAI 直API は `XAI_API_KEY` の設定が必要
-- 回答は「モデルごとの独立した」結果であり、モデル間の合議は行われない
-
 ## ファイル構成
 
 | パス | 用途 |
@@ -120,6 +121,8 @@ python3 scripts/multi-chat.py --panel novel-revision --file prompt.txt
 | `templates/panels.default.json` | パネル設定テンプレート |
 | `references/provider-quirks.md` | プロバイダ固有の注意点・モデル名形式・認証方式 |
 
-## 参照元
-
-このスキルは `novel2hermes` の MoA 推敲ワークフローから抽出・汎用化された。
+## 制限事項
+  モデル一覧の取得・選択・並列実行には `hermes-fake-moa` スキルを使用する。
+- Hermes Agent 内部からの実行に限る（`hermes chat -q` に依存）
+- 基本は3モデル同時実行、最大5モデルまで（数モデルの審査拒否やエラーを許容するため多めに送信することを認める）
+- ユーザに断りなくエージェント側で勝手にモデルを選び、送信してはならない
