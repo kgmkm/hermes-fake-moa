@@ -1,7 +1,7 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.1.0
+version: 1.1.1
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 

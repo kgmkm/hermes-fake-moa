@@ -11,14 +11,17 @@ Usage:
 
 import argparse
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
 
 TIMEOUT = 300  # 1プロセスあたりの最大秒数
 MAX_TURNS = 3  # ツール呼び出し制限
+ARG_MAX_THRESHOLD = 30000  # このサイズを超えるプロンプトは一時ファイル経由で渡す
 
 
 def resolve_panels_file(cwd: str | None = None) -> Path:
@@ -56,6 +59,10 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
     subprocess.run のリスト引数を使うため、プロンプトの改行はそのまま渡せる。
     シェルを経由しないのでエスケープは不要。
     
+    プロンプトが ARG_MAX_THRESHOLD (30KB) を超える場合、
+    内容を一時ファイルに書き出し、-q には read_file 指示のみ渡す。
+    これにより OS の ARG_MAX 制限 (E2BIG / Errno 7) を回避する。
+    
     Windows 環境では hermes が PATH にある必要がある。
     hermes が見つからない場合は hermes.bat またはフルパスを使用。"""
     label = f"[{idx}] {model_id}"
@@ -67,13 +74,39 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
         # PowerShell / CMD では hermes.bat または hermes.exe
         hermes_cmd = "hermes"
 
-    cmd = [
-        hermes_cmd, "chat", "-q", prompt,
-        "-m", model_id,
-        "--provider", provider,
-        "-Q", "--yolo",
-        "--max-turns", str(MAX_TURNS),
-    ]
+    # ARG_MAX 回避: プロンプトが大きい場合は一時ファイル経由で渡す
+    tmpfile = None
+    if len(prompt) > ARG_MAX_THRESHOLD:
+        tmpfile = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.txt', prefix='moa_prompt_',
+            delete=False, encoding='utf-8'
+        )
+        tmpfile.write(prompt)
+        tmpfile.close()
+
+        instruction = (
+            f"read_file で {tmpfile.name} を読み、"
+            f"内容に従ってください。"
+            f"ファイルの指示に従い回答のみを出力してください。"
+            f"前説や前置きは不要です。"
+        )
+        turns = MAX_TURNS + 2  # read_file + 回答のための余裕
+        cmd = [
+            hermes_cmd, "chat", "-q", instruction,
+            "-m", model_id,
+            "--provider", provider,
+            "-Q", "--yolo",
+            "--max-turns", str(turns),
+        ]
+        print(f"   📄 大規模プロンプト({len(prompt)}chars): 一時ファイル経由", file=sys.stderr)
+    else:
+        cmd = [
+            hermes_cmd, "chat", "-q", prompt,
+            "-m", model_id,
+            "--provider", provider,
+            "-Q", "--yolo",
+            "--max-turns", str(MAX_TURNS),
+        ]
 
     start = time.time()
     try:
@@ -137,6 +170,13 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
             "error": str(e),
             "session_id": "",
         }
+    finally:
+        # 一時ファイルの後始末
+        if tmpfile:
+            try:
+                os.unlink(tmpfile.name)
+            except OSError:
+                pass
 
 
 def run_parallel(panel: list[dict], prompt: str) -> list[dict]:
