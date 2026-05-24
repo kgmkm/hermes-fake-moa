@@ -1,7 +1,7 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.1.1
+version: 1.1.2
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 
@@ -9,6 +9,34 @@ tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 
 複数の LLM に同じ質問を同時に投げ、回答を比較するためのスキル。
 「本物の MoA（Mixture of Agents）」ではなく、**手動オーケストレーションによる並列モデル実行**です。
+
+## ⚠️ 最重要警告：Hermes Agent ビルトイン `moa` ツールを絶対に使わないこと
+
+Hermes Agent には **ビルトインの `mixture_of_agents` ツール**（以下「ビルトイン moa」）が存在する。
+これは **4つの参照モデル + 1つの集約モデルを OpenRouter 経由で呼び出す** もので、
+hermes-fake-moa とは **全く別物** である。
+
+**ビルトイン moa を使ってはならない理由**:
+
+1. **高額な API コスト**: OpenRouter 経由で最大5モデルを呼ぶため、1回の実行で $1〜$5 以上の課金が発生しうる（実害: $5.80 の損失）
+2. **モデル選択不可**: ビルトイン moa は自動でモデルを選ぶため、ユーザの希望するモデル構成にならない
+3. **hermes-fake-moa との競合**: ビルトイン moa が有効だと、エージェントが意図せずそちらを使ってしまう
+
+**絶対ルール**:
+
+- `mixture_of_agents()` 関数を **絶対に呼ばない**
+- ツール一覧に `moa` が表示されている場合、`hermes config set toolsets` で **無効化する**
+- 複数 LLM の並列実行には **必ず hermes-fake-moa の `multi-chat.py` を使用する**
+- 「MoA」「複数モデル」「並列実行」といった指示に対して、**ビルトイン moa にフォールバックしない**
+
+**無効化コマンド**（moa ツールセットが有効な場合）:
+```bash
+# 現在のツールセット設定を確認
+hermes config get toolsets
+
+# moa を除外して再設定（例: 他のツールセットはそのまま）
+hermes config set toolsets "terminal,file,web,skills,search,patch,delegation"
+```
 
 ## 前提
 
@@ -126,3 +154,4 @@ python3 scripts/multi-chat.py --panel novel-revision --file prompt.txt
 - Hermes Agent 内部からの実行に限る（`hermes chat -q` に依存）
 - 基本は3モデル同時実行、最大5モデルまで（数モデルの審査拒否やエラーを許容するため多めに送信することを認める）
 - ユーザに断りなくエージェント側で勝手にモデルを選び、送信してはならない
+- **ビルトイン `mixture_of_agents` ツール（moa ツールセット）は絶対に使用禁止**。OpenRouter 経由で高額課金が発生するため（実害 $5.80）。複数 LLM 実行には必ず本スキルの `multi-chat.py` を使用すること
