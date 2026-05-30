@@ -1,114 +1,115 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.1.2
+version: 1.2.0
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 
-# Hermes Fake MoA — マルチLLM並列オーケストレーター
+# Hermes Fake MoA — Multi-LLM Parallel Orchestrator
 
-複数の LLM に同じ質問を同時に投げ、回答を比較するためのスキル。
-「本物の MoA（Mixture of Agents）」ではなく、**手動オーケストレーションによる並列モデル実行**です。
+**Hermes Agent Exclusive Skill**
 
-## ⚠️ 最重要警告：Hermes Agent ビルトイン `moa` ツールを絶対に使わないこと
+A skill for sending the same question to multiple LLMs simultaneously and comparing their responses.
+This is **NOT true MoA (Mixture of Agents)** — it is **manual orchestration with parallel model execution**.
 
-Hermes Agent には **ビルトインの `mixture_of_agents` ツール**（以下「ビルトイン moa」）が存在する。
-これは **4つの参照モデル + 1つの集約モデルを OpenRouter 経由で呼び出す** もので、
-hermes-fake-moa とは **全く別物** である。
+## ⚠️ CRITICAL: Never Use the Built-in Hermes Agent `moa` Tool
 
-**ビルトイン moa を使ってはならない理由**:
+Hermes Agent ships with a **built-in `mixture_of_agents` tool** (hereafter "built-in moa").
+It calls **4 reference models + 1 aggregator model via OpenRouter** and is **completely different** from hermes-fake-moa.
 
-1. **高額な API コスト**: OpenRouter 経由で最大5モデルを呼ぶため、1回の実行で $1〜$5 以上の課金が発生しうる（実害: $5.80 の損失）
-2. **モデル選択不可**: ビルトイン moa は自動でモデルを選ぶため、ユーザの希望するモデル構成にならない
-3. **hermes-fake-moa との競合**: ビルトイン moa が有効だと、エージェントが意図せずそちらを使ってしまう
+**Why you must NOT use the built-in moa**:
 
-**絶対ルール**:
+1. **High API costs**: Calling up to 5 models via OpenRouter can incur $1–$5+ per run (actual damage: $5.80 loss)
+2. **No model selection**: The built-in moa auto-selects models; you cannot choose your preferred configuration
+3. **Conflicts with hermes-fake-moa**: When the built-in moa toolset is enabled, agents may accidentally use it
 
-- `mixture_of_agents()` 関数を **絶対に呼ばない**
-- ツール一覧に `moa` が表示されている場合、`hermes config set toolsets` で **無効化する**
-- 複数 LLM の並列実行には **必ず hermes-fake-moa の `multi-chat.py` を使用する**
-- 「MoA」「複数モデル」「並列実行」といった指示に対して、**ビルトイン moa にフォールバックしない**
+**Absolute rules**:
 
-**無効化コマンド**（moa ツールセットが有効な場合）:
+- **Never call** the `mixture_of_agents()` function
+- If `moa` appears in your toolsets, **disable it** with `hermes config set toolsets`
+- For multi-LLM parallel execution, **always use hermes-fake-moa's `multi-chat.py`**
+- Never fall back to the built-in moa when you see instructions like "MoA", "multiple models", or "parallel execution"
+
+**Disable command** (if the moa toolset is enabled):
 ```bash
-# 現在のツールセット設定を確認
+# Check current toolset configuration
 hermes config get toolsets
 
-# moa を除外して再設定（例: 他のツールセットはそのまま）
+# Reconfigure excluding moa (keep other toolsets as-is)
 hermes config set toolsets "terminal,file,web,skills,search,patch,delegation"
 ```
 
-## 前提
+## Prerequisites
 
-- Hermes Agent が動作する環境
-- 1つ以上の LLM プロバイダが設定済み
-- Python 3.10+（Windows では `python` コマンドを使用）
+- Hermes Agent running environment
+- At least one LLM provider configured
+- Python 3.10+ (use `python` on Windows)
 
-> **Windows (PowerShell) 環境**: コマンド例の `python3` を `python` に読み替えてください。
-> スクリプト内部のサブプロセス呼び出し（`select-panel.py` → `list-models.py`）は `sys.executable` を使用しており、環境差異は自動解決されます。
+> **Windows (PowerShell)**: Replace `python3` with `python` in command examples.
+> Script-internal subprocess calls (`select-panel.py` → `list-models.py`) use `sys.executable`,
+> so environment differences are resolved automatically.
 
-## 対応プロバイダ（2026年5月時点）
+## Supported Providers (as of May 2026)
 
-| プロバイダ | `--provider` 名 | 認証 | 備考 |
-|-----------|----------------|------|------|
-| OpenCode Go | `opencode-go` | 不要 | 15モデル、$10/月定額 |
-| Nous Portal | `nous` | OAuth | 250+モデル、free枠あり |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 350モデル、従量課金 |
-| Google AI Studio | `google` | `GOOGLE_API_KEY` | 35モデル、無料枠あり |
-| Gemini OAuth | `gemini-cli` | OAuth (Code Assist) | 35モデル、OAuth認証でAPI Key不要 |
-| xAI / Grok | `xai` | `XAI_API_KEY` | 8モデル、課金要 |
-| NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY` | 123モデル、無料枠あり |
-| Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | 39モデル、ollama.com/v1 |
-| LM Studio | `lmstudio` | 不要（ローカル） | ローカルモデル、port 1234 |
-| GitHub Copilot | `copilot` | GH_TOKEN (gh CLI) | 22モデル、reasoning effort対応 |
-| HuggingFace | `huggingface` | `HF_TOKEN` | 128モデル、Inference Providers |
-| OpenAI Codex | `openai-codex` | OAuth | ChatGPT Plus/Pro要、reasoning effort対応 |
+| Provider | `--provider` name | Auth | Notes |
+|----------|-------------------|------|-------|
+| OpenCode Go | `opencode-go` | None | 15 models, $10/mo flat rate |
+| Nous Portal | `nous` | OAuth | 250+ models, free tier |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 350 models, pay-per-token |
+| Google AI Studio | `google` | `GOOGLE_API_KEY` | 35 models, free tier |
+| Gemini OAuth | `gemini-cli` | OAuth (Code Assist) | 35 models, no API key needed |
+| xAI / Grok | `xai` | `XAI_API_KEY` | 8 models, subscription required |
+| NVIDIA NIM | `nvidia` | `NVIDIA_API_KEY` | 123 models, free tier |
+| Ollama Cloud | `ollama-cloud` | `OLLAMA_API_KEY` | 39 models, ollama.com/v1 |
+| LM Studio | `lmstudio` | None (local) | Local models, port 1234 |
+| GitHub Copilot | `copilot` | GH_TOKEN (gh CLI) | 22 models, reasoning effort support |
+| HuggingFace | `huggingface` | `HF_TOKEN` | 128 models, Inference Providers |
+| OpenAI Codex | `openai-codex` | OAuth | Requires ChatGPT Plus/Pro, reasoning effort support |
 
-## ワークフロー
+## Workflow
 
-### Step 1: モデル一覧の取得
+### Step 1: List available models
 
 ```bash
 python3 scripts/list-models.py > models.md
 ```
 
-`models.md` に全プロバイダの利用可能モデル一覧が Markdown 表で出力される。
+Outputs all available models across all providers as a Markdown table in `models.md`.
 
-JSON 出力も可能:
+JSON output also available:
 ```bash
 python3 scripts/list-models.py --json > models.json
 ```
 
-### Step 2: どのプロバイダ/モデルを使うかユーザに相談
+### Step 2: Consult the user on which provider/model to use
 
-必ずユーザに、models.md を読むことと、そこからMoAとして使いたいプロバイダ/モデルを３～５つ選ぶよう伝える。
-その上で、モデルの違いが分かりづらいユーザもいるため、おすすめプロバイダ/モデルも３つほど提案する。
+Always ask the user to review `models.md` and select 3–5 providers/models for their MoA panel.
+Some users may find model differences hard to parse — also suggest about 3 recommended options.
 
-提案の条件は以下。
+**Recommended provider/model selection criteria**:
+- Flat-rate providers (OpenCode Go, Ollama Cloud, Codex, etc.) flagship or midship models
+- Credit-based but relatively inexpensive and recent models
+- Free-tier models with reasonably long context windows
 
-**おすすめプロバイダ/モデル選定基準** :
-- 定額で使えるプロバイダ（opencode go, Ollama Cloud, codex, claude codeなど）のフラグシップorミッドシップモデル
-- クレジット型課金だが比較的安価で新しいモデル
-- 無料で使えてコンテキストも長めなモデル
+**Important**: The agent must NOT select models and send prompts without the user's explicit consent.
+Using the user's credits without permission is a liability issue.
 
-なお、エージェント側で勝手にモデルを選び、選定して送信してはならない。勝手にユーザのクレジットを使う事は責任問題につながる。
+### Step 3: Select a panel (model set)
 
-### Step 3: パネル（モデルセット）の選択
-
-**非対話モード**（エージェント・スクリプトから使用）:
+**Non-interactive mode** (for agents and scripts):
 ```bash
-python3 scripts/select-panel.py --name novel-revision \
+python3 scripts/select-panel.py --name my-panel \
   --models "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous,gemini-2.5-flash:google"
 ```
 
-`--models` 形式: `model_id:provider` をカンマ区切り。provider 省略時は自動選択。
+`--models` format: comma-separated `model_id:provider` pairs. Provider can be omitted for auto-selection.
 
-または手動で `panels.json` を編集:
+Or manually edit `panels.json`:
 ```json
 {
   "version": 1,
   "panels": {
-    "novel-revision": [
+    "my-panel": [
       {"id": "mimo-v2.5-pro", "provider": "opencode-go"},
       {"id": "deepseek/deepseek-v4-flash", "provider": "nous"},
       {"id": "gemini-2.5-flash", "provider": "google"}
@@ -117,41 +118,54 @@ python3 scripts/select-panel.py --name novel-revision \
 }
 ```
 
-### Step 4: 並列送信
+### Step 4: Send prompts in parallel
 
 ```bash
-python3 scripts/multi-chat.py --panel novel-revision --prompt "あなたの質問"
+python3 scripts/multi-chat.py --panel my-panel --prompt "Your question here"
 ```
 
-またはファイルからプロンプトを読み込み:
+Or read the prompt from a file:
 ```bash
-python3 scripts/multi-chat.py --panel novel-revision --file prompt.txt
+python3 scripts/multi-chat.py --panel my-panel --file prompt.txt
 ```
 
-**panels.json / results/ の配置場所**:
-- デフォルト: カレントディレクトリ
-- `--cwd /path/to/project` で指定可能（Hermes Agent 内から実行する場合に推奨）
+**Location of `panels.json` / `results/`**:
+- Default: current working directory
+- Use `--cwd /path/to/project` to specify (recommended when running from within Hermes Agent)
 
-結果は `results/` ディレクトリにタイムスタンプ付きで保存される。
+Results are saved in the `results/` directory with timestamps.
 
-## 結果の読み方
+## Reading Results
 
-各モデルの回答は個別ファイルに保存され、サマリーが標準出力に表示される。
-複数モデルが共通して指摘した項目は特に重要。
+Each model's response is saved to an individual file, with a summary printed to stdout.
+Items flagged by multiple models are especially noteworthy.
 
-## ファイル構成
+## File Structure
 
-| パス | 用途 |
-|------|------|
-| `scripts/list-models.py` | モデル一覧出力（MD / JSON） |
-| `scripts/select-panel.py` | 対話型パネル選択 |
-| `scripts/multi-chat.py` | 並列プロンプト送信 + 結果集約 |
-| `templates/panels.default.json` | パネル設定テンプレート |
-| `references/provider-quirks.md` | プロバイダ固有の注意点・モデル名形式・認証方式 |
+| Path | Purpose |
+|------|---------|
+| `scripts/list-models.py` | List all available models (MD / JSON) |
+| `scripts/select-panel.py` | Interactive/non-interactive panel selection |
+| `scripts/multi-chat.py` | Parallel prompt dispatch + result collection |
+| `templates/panels.default.json` | Panel configuration template |
+| `references/provider-quirks.md` | Provider-specific notes, model ID formats, auth methods |
+| `references/large-prompt-workaround.md` | ARG_MAX limit workaround for large prompts (>30KB) |
 
-## 制限事項
-  モデル一覧の取得・選択・並列実行には `hermes-fake-moa` スキルを使用する。
-- Hermes Agent 内部からの実行に限る（`hermes chat -q` に依存）
-- 基本は3モデル同時実行、最大5モデルまで（数モデルの審査拒否やエラーを許容するため多めに送信することを認める）
-- ユーザに断りなくエージェント側で勝手にモデルを選び、送信してはならない
-- **ビルトイン `mixture_of_agents` ツール（moa ツールセット）は絶対に使用禁止**。OpenRouter 経由で高額課金が発生するため（実害 $5.80）。複数 LLM 実行には必ず本スキルの `multi-chat.py` を使用すること
+## Limitations
+
+- Model listing, selection, and parallel execution must use the `hermes-fake-moa` skill
+- Hermes Agent internal execution only (depends on `hermes chat -q`)
+- Default: 3 models simultaneously, maximum 5 (sending extra models is allowed to tolerate rejections/errors from some)
+- The agent must NOT select models and send prompts without the user's explicit consent
+- **The built-in `mixture_of_agents` tool (moa toolset) is absolutely forbidden**. It causes high billing via OpenRouter (actual damage: $5.80). Always use this skill's `multi-chat.py` for multi-LLM execution
+
+## Common Pitfalls
+
+| Failure | Cause | Fix |
+|---------|-------|-----|
+| `[Errno 7] Argument list too long` | Prompt >67KB passed via `-q` exceeds ARG_MAX | multi-chat.py v1.1.1+ auto-switches to temp-file mode |
+| Built-in moa used, $5.80 charged | moa toolset enabled + OpenRouter configured | `hermes config set toolsets` to exclude moa |
+| Symlink broken, skill_view fails | Skill path changed / repo moved | `ln -sfn /actual/path ~/.hermes/skills/skill-name` |
+| `mimo-v2.5-pro` times out (300s) | Large prompt (>25KB) causes mimo to hang | Use `deepseek-v4-pro` or `kimi-k2.6` + `glm-5.1` 2-model config instead |
+| Follow-up questions lose context | multi-chat.py is stateless; each run is independent | Embed the previous analysis summary in the new prompt. Previous results persist in `results/` — use `read_file` to fetch and inject as context |
+| `qwen3.6-plus` fails every time | Model loading issue in opencode-go (`Loading weights: 100%` → error) | Exclude this model from panels. See `references/provider-quirks.md` |

@@ -4,23 +4,23 @@
 
 使い方:
   対話選択（人間がターミナルで操作）:
-    python3 select-panel.py --name novel-revision
+      python3 select-panel.py --name my-panel
 
   非対話選択（エージェントやスクリプトから使用）:
-    python3 select-panel.py --name novel-revision --models "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous,gemini-2.5-flash:google"
+    python3 select-panel.py --name my-panel --models "mimo-v2.5-pro:opencode-go,deepseek/deepseek-v4-flash:nous,gemini-2.5-flash:google"
 
   パネル一覧:
     python3 select-panel.py --list
 
   パネル削除:
-    python3 select-panel.py --delete novel-revision
+    python3 select-panel.py --delete my-panel
 
   panels.json の直接編集も可能。形式:
     {
       "version": 1,
-      "active": "novel-revision",
+      "active": "my-panel",
       "panels": {
-        "novel-revision": [
+        "my-panel": [
           {"id": "mimo-v2.5-pro", "provider": "opencode-go"},
           {"id": "deepseek/deepseek-v4-flash", "provider": "nous"}
         ]

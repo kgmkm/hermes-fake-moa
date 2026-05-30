@@ -3,7 +3,7 @@
 選択されたパネル（2〜5モデル）に同一プロンプトを並列送信し、結果を集約する。
 
 Usage:
-  python3 multi-chat.py --panel novel-revision --prompt "質問文"
+  python3 multi-chat.py --panel my-panel --prompt "質問文"
   python3 multi-chat.py --panel default --file prompt.txt
   python3 multi-chat.py --panel default < prompt.txt
   python3 multi-chat.py --panel default --file prompt.txt --cwd /path/to/project
