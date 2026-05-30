@@ -7,6 +7,7 @@ Usage:
   python3 multi-chat.py --panel default --file prompt.txt
   python3 multi-chat.py --panel default < prompt.txt
   python3 multi-chat.py --panel default --file prompt.txt --cwd /path/to/project
+  python3 multi-chat.py --panel my-panel --prompt "..." --delay 0.8
 """
 
 import argparse
@@ -179,14 +180,36 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
                 pass
 
 
-def run_parallel(panel: list[dict], prompt: str) -> list[dict]:
-    """全モデルを並列起動し、全完了を待つ。"""
+def run_parallel(panel: list[dict], prompt: str, delay: float = 0.0) -> list[dict]:
+    """全モデルを並列起動し、全完了を待つ。
+    
+    delay > 0 の場合、同一プロバイダのモデル間で遅延を入れる。
+    これにより API レート制限（429 Too Many Requests）を緩和する。"""
     from concurrent.futures import ThreadPoolExecutor, as_completed
+    import threading
 
     results = []
+    submit_lock = threading.Lock()
+
+    # プロバイダごとにグルーピングして最後の投入時刻を追跡
+    last_submit: dict[str, float] = {}
+
+    def submit_with_delay(model: dict, idx: int):
+        """同一プロバイダのモデル間で delay 秒の間隔を空けて投入。"""
+        nonlocal last_submit
+        provider = model["provider"]
+        with submit_lock:
+            now = time.time()
+            last = last_submit.get(provider, 0)
+            wait = delay - (now - last)
+            if wait > 0:
+                time.sleep(wait)
+            last_submit[provider] = time.time()
+        return run_model(model["id"], model["provider"], prompt, idx)
+
     with ThreadPoolExecutor(max_workers=len(panel)) as executor:
         futures = {
-            executor.submit(run_model, m["id"], m["provider"], prompt, i + 1): m
+            executor.submit(submit_with_delay, m, i + 1): m
             for i, m in enumerate(panel)
         }
         for future in as_completed(futures):
@@ -199,7 +222,7 @@ def run_parallel(panel: list[dict], prompt: str) -> list[dict]:
 
 
 def save_results(results: list[dict], panel_name: str, prompt: str, cwd: str | None = None):
-    """結果を results/ に保存。"""
+    """結果を results/ に保存。個別ファイル + サマリー MD。"""
     results_dir = resolve_results_dir(cwd)
     results_dir.mkdir(exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -216,17 +239,46 @@ def save_results(results: list[dict], panel_name: str, prompt: str, cwd: str | N
             content += f"\n\n{'='*60}\nSTDERR:\n{r['error']}"
         Path(fname).write_text(content)
 
-    # サマリーファイル
-    summary = f"# Fake MoA Results — {panel_name}\n\n"
-    summary += f"**Time**: {ts}\n\n"
-    summary += f"**Prompt** ({len(prompt)} chars):\n> {prompt[:300]}{'...' if len(prompt)>300 else ''}\n\n"
-    summary += "## Models\n\n"
-    for r in results:
+    # サマリーファイル（Markdown）
+    summary = f"# Fake MoA Results — `{panel_name}`\n\n"
+    summary += f"**Time**: {ts}  \n"
+    summary += f"**Models**: {len(results)}  \n"
+    summary += f"**Prompt** ({len(prompt)} chars):\n"
+    summary += f"> {prompt[:300]}{'...' if len(prompt)>300 else ''}\n\n"
+
+    # ステータス表
+    summary += "## Status\n\n"
+    summary += "| # | Model | Provider | Status | Time |\n"
+    summary += "|---|-------|----------|--------|------|\n"
+    for i, r in enumerate(results, 1):
         status = "✅" if r["exit_code"] == 0 else "❌"
-        summary += f"- {status} `{r['model']}` @ {r['provider']} ({r['elapsed']}s)\n"
-    summary += f"\n## Responses\n\n"
+        summary += f"| {i} | `{r['model']}` | {r['provider']} | {status} | {r['elapsed']}s |\n"
+    summary += "\n"
+
+    # 比較表（成功したモデルのみ、最初の120文字をプレビュー）
+    ok_results = [r for r in results if r["exit_code"] == 0]
+    if len(ok_results) >= 2:
+        summary += "## Comparison\n\n"
+        summary += "| Model | Preview |\n"
+        summary += "|-------|--------|\n"
+        for r in ok_results:
+            preview = r["output"][:120].replace("\n", " ").replace("|", "\\|")
+            summary += f"| `{r['model']}` | {preview}... |\n"
+        summary += "\n"
+
+    # 各モデルの回答全文
+    summary += "## Responses\n\n"
     for r in results:
-        summary += f"### {r['model']}\n\n{r['output']}\n\n---\n\n"
+        status_icon = "✅" if r["exit_code"] == 0 else "❌"
+        summary += f"### {status_icon} {r['model']} (`{r['provider']}` — {r['elapsed']}s)\n\n"
+        if r["exit_code"] == 0:
+            summary += f"{r['output']}\n\n"
+        else:
+            summary += f"```\n{r['output']}\n```\n"
+            if r["error"]:
+                summary += f"**Error**: `{r['error'][:200]}`\n"
+        summary += "\n---\n\n"
+
     Path(f"{base}_summary.md").write_text(summary)
 
     return base
@@ -242,6 +294,8 @@ def main():
     parser.add_argument("--cwd", "-c", help="panels.json / results/ の配置ディレクトリ（未指定時はカレント）")
     parser.add_argument("--max-turns", type=int, default=MAX_TURNS, help="ツール呼び出し上限")
     parser.add_argument("--timeout", type=int, default=TIMEOUT, help="タイムアウト秒数")
+    parser.add_argument("--delay", "-d", type=float, default=0.0,
+                        help="同一プロバイダのモデル間の投入遅延（秒）。レート制限緩和に有効（推奨: 0.5〜1.0）")
     args = parser.parse_args()
 
     MAX_TURNS = args.max_turns
@@ -264,12 +318,15 @@ def main():
 
     panel = load_panel(args.panel, cwd=args.cwd)
 
-    print(f"\n📡 Fake MoA: {args.panel} ({len(panel)}モデル)\n", file=sys.stderr)
+    print(f"\n📡 Fake MoA: {args.panel} ({len(panel)}モデル)", file=sys.stderr)
+    if args.delay > 0:
+        print(f"   ⏱️  プロバイダ間遅延: {args.delay}s", file=sys.stderr)
+    print(file=sys.stderr)
     for m in panel:
         print(f"   `{m['id']}` @ {m['provider']}", file=sys.stderr)
     print(file=sys.stderr)
 
-    results = run_parallel(panel, prompt)
+    results = run_parallel(panel, prompt, delay=args.delay)
     base = save_results(results, args.panel, prompt, cwd=args.cwd)
 
     # 標準出力にサマリー

@@ -1,7 +1,7 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.2.0
+version: 1.3.0
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 
@@ -135,9 +135,19 @@ python3 scripts/multi-chat.py --panel my-panel --file prompt.txt
 
 Results are saved in the `results/` directory with timestamps.
 
+**Rate limiting prevention**: If multiple models share the same provider, use `--delay` to stagger launches and avoid API rate limits (429 errors):
+```bash
+python3 scripts/multi-chat.py --panel my-panel --file prompt.txt --delay 0.8
+```
+
 ## Reading Results
 
-Each model's response is saved to an individual file, with a summary printed to stdout.
+Each model's response is saved to an individual `.txt` file.
+A combined `_summary.md` Markdown file is also generated with:
+- A status table (model, provider, result, elapsed time)
+- A side-by-side comparison table (first 120 chars of each response)
+- Full responses for each model
+
 Items flagged by multiple models are especially noteworthy.
 
 ## File Structure
@@ -169,3 +179,4 @@ Items flagged by multiple models are especially noteworthy.
 | `mimo-v2.5-pro` times out (300s) | Large prompt (>25KB) causes mimo to hang | Use `deepseek-v4-pro` or `kimi-k2.6` + `glm-5.1` 2-model config instead |
 | Follow-up questions lose context | multi-chat.py is stateless; each run is independent | Embed the previous analysis summary in the new prompt. Previous results persist in `results/` — use `read_file` to fetch and inject as context |
 | `qwen3.6-plus` fails every time | Model loading issue in opencode-go (`Loading weights: 100%` → error) | Exclude this model from panels. See `references/provider-quirks.md` |
+| 429 / rate limit errors | Multiple models on the same provider fire simultaneously | Use `--delay 0.8` (or higher) to stagger launches. See `--delay` option in Step 4 |
