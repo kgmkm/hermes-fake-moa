@@ -88,17 +88,20 @@ def fetch_nous(auth: dict) -> list[dict]:
     token = auth.get("providers", {}).get("nous", {}).get("agent_key")
     if not token:
         return []
-    req = urllib.request.Request(
-        "https://inference-api.nousresearch.com/v1/models",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    r = urllib.request.urlopen(req, timeout=15)
-    data = json.load(r)
-    return [{
-        "id": m["id"], "context_length": m.get("context_length", 131_072),
-        "max_output_tokens": None,
-        "pricing": {"prompt": "0", "completion": "0"}, "provider_specific": {},
-    } for m in data.get("data", [])]
+    try:
+        req = urllib.request.Request(
+            "https://inference-api.nousresearch.com/v1/models",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = urllib.request.urlopen(req, timeout=15)
+        data = json.load(r)
+        return [{
+            "id": m["id"], "context_length": m.get("context_length", 131_072),
+            "max_output_tokens": None,
+            "pricing": {"prompt": "0", "completion": "0"}, "provider_specific": {},
+        } for m in data.get("data", [])]
+    except Exception:
+        return []
 
 
 def fetch_openrouter(env: dict) -> list[dict]:
@@ -133,6 +136,9 @@ def fetch_google(env: dict) -> list[dict]:
     key = env.get("GOOGLE_API_KEY") or env.get("GEMINI_API_KEY")
     if not key:
         return []
+    # NOTE: Google AI Studio requires the API key as a URL query parameter.
+    # This means the key may appear in Google's server access logs.
+    # This is Google's standard API design — not a script-level concern.
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
     r = urllib.request.urlopen(url, timeout=15)
     data = json.load(r)

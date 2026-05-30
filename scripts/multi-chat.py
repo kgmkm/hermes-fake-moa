@@ -54,7 +54,7 @@ def load_panel(name: str, cwd: str | None = None) -> list[dict]:
     return panels[name]
 
 
-def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
+def run_model(model_id: str, provider: str, prompt: str, idx: int, cwd: str | None = None) -> dict:
     """1モデルに hermes chat -q を投げ、結果を返す。
     
     subprocess.run のリスト引数を使うため、プロンプトの改行はそのまま渡せる。
@@ -64,16 +64,13 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
     内容を一時ファイルに書き出し、-q には read_file 指示のみ渡す。
     これにより OS の ARG_MAX 制限 (E2BIG / Errno 7) を回避する。
     
-    Windows 環境では hermes が PATH にある必要がある。
-    hermes が見つからない場合は hermes.bat またはフルパスを使用。"""
+    cwd が指定された場合、hermes chat サブプロセスもそのディレクトリで実行する。
+    プロンプト内の相対パス参照が正しく解決される。"""
     label = f"[{idx}] {model_id}"
     print(f"🚀 {label} 送信中...", file=sys.stderr)
 
     # Windows 環境では hermes の実行ファイル名が異なる場合がある
     hermes_cmd = "hermes"
-    if sys.platform == "win32":
-        # PowerShell / CMD では hermes.bat または hermes.exe
-        hermes_cmd = "hermes"
 
     # ARG_MAX 回避: プロンプトが大きい場合は一時ファイル経由で渡す
     tmpfile = None
@@ -112,7 +109,7 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
     start = time.time()
     try:
         r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=TIMEOUT
+            cmd, capture_output=True, text=True, timeout=TIMEOUT, cwd=cwd
         )
         elapsed = time.time() - start
         output = r.stdout.strip()
@@ -180,7 +177,7 @@ def run_model(model_id: str, provider: str, prompt: str, idx: int) -> dict:
                 pass
 
 
-def run_parallel(panel: list[dict], prompt: str, delay: float = 0.0) -> list[dict]:
+def run_parallel(panel: list[dict], prompt: str, delay: float = 0.0, cwd: str | None = None) -> list[dict]:
     """全モデルを並列起動し、全完了を待つ。
     
     delay > 0 の場合、同一プロバイダのモデル間で遅延を入れる。
@@ -195,17 +192,25 @@ def run_parallel(panel: list[dict], prompt: str, delay: float = 0.0) -> list[dic
     last_submit: dict[str, float] = {}
 
     def submit_with_delay(model: dict, idx: int):
-        """同一プロバイダのモデル間で delay 秒の間隔を空けて投入。"""
+        """同一プロバイダのモデル間で delay 秒の間隔を空けて投入。
+        
+        計画時刻をロック下で計算し、スリープはロック外で行う。
+        これにより異なるプロバイダのモデルは並列にスケジュール可能。"""
         nonlocal last_submit
         provider = model["provider"]
         with submit_lock:
             now = time.time()
             last = last_submit.get(provider, 0)
             wait = delay - (now - last)
-            if wait > 0:
-                time.sleep(wait)
-            last_submit[provider] = time.time()
-        return run_model(model["id"], model["provider"], prompt, idx)
+            planned = now + max(0, wait)
+            last_submit[provider] = planned
+        
+        # ロックを解放してからスリープ（他プロバイダのスケジュールをブロックしない）
+        sleep_time = planned - time.time()
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+        
+        return run_model(model["id"], model["provider"], prompt, idx, cwd=cwd)
 
     with ThreadPoolExecutor(max_workers=len(panel)) as executor:
         futures = {
@@ -303,7 +308,11 @@ def main():
 
     # プロンプト取得
     if args.file:
-        prompt = Path(args.file).read_text().strip()
+        try:
+            prompt = Path(args.file).read_text().strip()
+        except FileNotFoundError:
+            print(f"❌ ファイルが見つかりません: {args.file}")
+            sys.exit(1)
     elif args.prompt:
         prompt = args.prompt
     elif not sys.stdin.isatty():
@@ -326,7 +335,7 @@ def main():
         print(f"   `{m['id']}` @ {m['provider']}", file=sys.stderr)
     print(file=sys.stderr)
 
-    results = run_parallel(panel, prompt, delay=args.delay)
+    results = run_parallel(panel, prompt, delay=args.delay, cwd=args.cwd)
     base = save_results(results, args.panel, prompt, cwd=args.cwd)
 
     # 標準出力にサマリー

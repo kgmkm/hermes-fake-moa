@@ -1,0 +1,19 @@
+Model: minimax-m2.7
+Provider: opencode-go
+Exit: 1  Time: 25.4s
+Session: 
+============================================================
+
+API call failed after 3 retries: HTTP 404 — Not Found | opencode
+
+============================================================
+STDERR:
+Loading weights:   0%|          | 0/152 [00:00<?, ?it/s]
+Loading weights:  75%|███████▌  | 114/152 [00:00<00:00, 1119.65it/s]
+Loading weights: 100%|██████████| 152/152 [00:00<00:00, 1355.05it/s]
+
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]
+Batches: 100%|██████████| 1/1 [00:00<00:00,  1.59it/s]
+Batches: 100%|██████████| 1/1 [00:00<00:00,  1.58it/s]
+
+session_id: 20260530_111205_93839e

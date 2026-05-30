@@ -1,7 +1,7 @@
 ---
 name: hermes-fake-moa
 description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.3.0
+version: 1.3.1
 tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
 ---
 
@@ -108,6 +108,7 @@ Or manually edit `panels.json`:
 ```json
 {
   "version": 1,
+  "active": "my-panel",
   "panels": {
     "my-panel": [
       {"id": "mimo-v2.5-pro", "provider": "opencode-go"},
@@ -117,6 +118,8 @@ Or manually edit `panels.json`:
   }
 }
 ```
+
+> **Note**: The `"active"` field is set automatically by `select-panel.py`. `multi-chat.py` requires `--panel` explicitly and ignores `active`.
 
 ### Step 4: Send prompts in parallel
 
@@ -165,7 +168,7 @@ Items flagged by multiple models are especially noteworthy.
 
 - Model listing, selection, and parallel execution must use the `hermes-fake-moa` skill
 - Hermes Agent internal execution only (depends on `hermes chat -q`)
-- Default: 3 models simultaneously, maximum 5 (sending extra models is allowed to tolerate rejections/errors from some)
+- Recommended: 3 models, minimum 2, maximum 5 (sending extra models is allowed to tolerate rejections/errors from some)
 - The agent must NOT select models and send prompts without the user's explicit consent
 - **The built-in `mixture_of_agents` tool (moa toolset) is absolutely forbidden**. It causes high billing via OpenRouter (actual damage: $5.80). Always use this skill's `multi-chat.py` for multi-LLM execution
 

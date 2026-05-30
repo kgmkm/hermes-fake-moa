@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "active": "self-review",
+  "panels": {
+    "self-review": [
+      {
+        "id": "kimi-k2.6",
+        "provider": "opencode-go"
+      },
+      {
+        "id": "glm-5.1",
+        "provider": "opencode-go"
+      },
+      {
+        "id": "mimo-v2.5-pro",
+        "provider": "opencode-go"
+      },
+      {
+        "id": "minimax-m2.7",
+        "provider": "opencode-go"
+      }
+    ]
+  }
+}

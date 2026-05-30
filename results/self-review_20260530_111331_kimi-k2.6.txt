@@ -1,0 +1,20 @@
+Model: kimi-k2.6
+Provider: opencode-go
+Exit: 1  Time: 22.7s
+Session: 
+============================================================
+
+
+
+============================================================
+STDERR:
+Loading weights:   0%|          | 0/152 [00:00<?, ?it/s]
+Loading weights:  51%|█████     | 77/152 [00:00<00:00, 768.05it/s]
+Loading weights: 100%|██████████| 152/152 [00:00<00:00, 865.75it/s]
+
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]
+Batches: 100%|██████████| 1/1 [00:00<00:00,  1.42it/s]
+Batches: 100%|██████████| 1/1 [00:00<00:00,  1.42it/s]
+Error: Error code: 400 - {'error': {'object': 'error', 'type': 'invalid_request_error', 'code': 'invalid_request_error', 'message': "Error from provider: cannot specify both 'thinking' and 'reasoning_effort'"}}
+
+session_id: 20260530_111203_3d9155
