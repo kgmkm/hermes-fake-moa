@@ -1,0 +1,8 @@
+# Hermes Fake MoA — .gitignore
+# User data (panels, results)
+panels.json
+results/
+
+# Python cache
+__pycache__/
+*.pyc
