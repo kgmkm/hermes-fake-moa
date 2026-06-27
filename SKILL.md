@@ -1,43 +1,36 @@
 ---
 name: hermes-fake-moa
-description: Multi-LLM parallel orchestrator — list available models across all configured providers, select 2–5 models into a panel, and send the same prompt to all of them simultaneously. NOT true MoA (no aggregator model). Results are collected side-by-side for human comparison.
-version: 1.3.1
-tags: [llm, multi-model, orchestration, parallel, moa, comparison, panel]
+description: Multi-LLM side-by-side comparison panel — list available models across all configured providers, select 2–5 models, and send the same prompt to all of them simultaneously. NO aggregator (unlike built-in MoA). Results are collected side-by-side for human comparison.
+version: 2.0.0
+tags: [llm, multi-model, orchestration, parallel, comparison, panel]
 ---
 
-# Hermes Fake MoA — Multi-LLM Parallel Orchestrator
+# Hermes Fake MoA — Multi-LLM Side-by-Side Comparison Panel
 
 **Hermes Agent Exclusive Skill**
 
-A skill for sending the same question to multiple LLMs simultaneously and comparing their responses.
-This is **NOT true MoA (Mixture of Agents)** — it is **manual orchestration with parallel model execution**.
+A skill for sending the same question to multiple LLMs simultaneously and comparing their raw responses side by side.
+This is **NOT MoA (Mixture of Agents)** — it is **parallel execution with no aggregation**.
+Each model responds independently; the user reads all outputs and judges for themselves.
 
-## ⚠️ CRITICAL: Never Use the Built-in Hermes Agent `moa` Tool
+## Why this skill still exists — vs. the built-in MoA
 
-Hermes Agent ships with a **built-in `mixture_of_agents` tool** (hereafter "built-in moa").
-It calls **4 reference models + 1 aggregator model via OpenRouter** and is **completely different** from hermes-fake-moa.
+Since PR #46081 (merged 2026-06-25, v0.18+) Hermes Agent has a **built-in MoA** that runs reference models then feeds their outputs to an aggregator that produces a single unified answer. The built-in MoA is now a virtual provider (`provider=moa`, `model=<preset>`) with mixed-provider support, explicit presets, and a `/moa` shortcut.
 
-**Why you must NOT use the built-in moa**:
+| Aspect | Built-in MoA (v0.18+) | hermes-fake-moa (this skill) |
+|--------|----------------------|------------------------------|
+| Goal | One unified answer (aggregator merges references) | Raw side-by-side comparison (no aggregator) |
+| Output | Single assistant response | N separate `.txt` files + `_summary.md` |
+| Tool schema | Aggregator gets full tools; references get trimmed text only | No tools. Plain text in, plain text out |
+| Session impact | Runs inside the agent loop (consumes context) | Stateless external process. Zero session pollution |
+| Provider list | Only already-configured providers appear in the picker | `list-models.py` scans ALL 12 providers regardless of config |
+| Use case | "I want the best answer and trust the aggregator to fuse them" | "I want to eyeball 3–5 different models myself before deciding" |
 
-1. **High API costs**: Calling up to 5 models via OpenRouter can incur $1–$5+ per run (actual damage: $5.80 loss)
-2. **No model selection**: The built-in moa auto-selects models; you cannot choose your preferred configuration
-3. **Conflicts with hermes-fake-moa**: When the built-in moa toolset is enabled, agents may accidentally use it
+**When to use which**:
 
-**Absolute rules**:
-
-- **Never call** the `mixture_of_agents()` function
-- If `moa` appears in your toolsets, **disable it** with `hermes config set toolsets`
-- For multi-LLM parallel execution, **always use hermes-fake-moa's `multi-chat.py`**
-- Never fall back to the built-in moa when you see instructions like "MoA", "multiple models", or "parallel execution"
-
-**Disable command** (if the moa toolset is enabled):
-```bash
-# Check current toolset configuration
-hermes config get toolsets
-
-# Reconfigure excluding moa (keep other toolsets as-is)
-hermes config set toolsets "terminal,file,web,skills,search,patch,delegation"
-```
+- Want a single best answer with tools → built-in `/moa` (new)
+- Want to compare raw model outputs yourself, no session pollution → this skill
+- Want a full cross-provider model inventory before configuring anything → `list-models.py`
 
 ## Prerequisites
 
@@ -49,13 +42,13 @@ hermes config set toolsets "terminal,file,web,skills,search,patch,delegation"
 > Script-internal subprocess calls (`select-panel.py` → `list-models.py`) use `sys.executable`,
 > so environment differences are resolved automatically.
 
-## Supported Providers (as of May 2026)
+## Supported Providers (as of June 2026)
 
 | Provider | `--provider` name | Auth | Notes |
 |----------|-------------------|------|-------|
 | OpenCode Go | `opencode-go` | None | 15 models, $10/mo flat rate |
 | Nous Portal | `nous` | OAuth | 250+ models, free tier |
-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 350 models, pay-per-token |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | 350+ models, pay-per-token |
 | Google AI Studio | `google` | `GOOGLE_API_KEY` | 35 models, free tier |
 | Gemini OAuth | `gemini-cli` | OAuth (Code Assist) | 35 models, no API key needed |
 | xAI / Grok | `xai` | `XAI_API_KEY` | 8 models, subscription required |
@@ -83,7 +76,7 @@ python3 scripts/list-models.py --json > models.json
 
 ### Step 2: Consult the user on which provider/model to use
 
-Always ask the user to review `models.md` and select 3–5 providers/models for their MoA panel.
+Always ask the user to review `models.md` and select 2–5 providers/models for their comparison panel.
 Some users may find model differences hard to parse — also suggest about 3 recommended options.
 
 **Recommended provider/model selection criteria**:
@@ -157,12 +150,14 @@ Items flagged by multiple models are especially noteworthy.
 
 | Path | Purpose |
 |------|---------|
-| `scripts/list-models.py` | List all available models (MD / JSON) |
+| `scripts/list-models.py` | List all available models across all 12 providers (MD / JSON) |
 | `scripts/select-panel.py` | Interactive/non-interactive panel selection |
 | `scripts/multi-chat.py` | Parallel prompt dispatch + result collection |
 | `templates/panels.default.json` | Panel configuration template |
+| `references/builtin-moa-architecture.md` | Built-in MoA v2.0 (PR #46081) internals: virtual provider, aggregator flow, `/moa` shortcuts, HermesBench numbers, **non-interactive config recipe** (Python via hermes_cli internals), **one-shot CLI invocation** (`hermes chat -q … --provider moa --model <preset> -t "" -Q --max-turns 1`) |
 | `references/provider-quirks.md` | Provider-specific notes, model ID formats, auth methods |
 | `references/large-prompt-workaround.md` | ARG_MAX limit workaround for large prompts (>30KB) |
+| `references/self-audit-workflow.md` | Recipe: using hermes-fake-moa to audit its own code (proven pattern) |
 
 ## Limitations
 
@@ -170,15 +165,14 @@ Items flagged by multiple models are especially noteworthy.
 - Hermes Agent internal execution only (depends on `hermes chat -q`)
 - Recommended: 3 models, minimum 2, maximum 5 (sending extra models is allowed to tolerate rejections/errors from some)
 - The agent must NOT select models and send prompts without the user's explicit consent
-- **The built-in `mixture_of_agents` tool (moa toolset) is absolutely forbidden**. It causes high billing via OpenRouter (actual damage: $5.80). Always use this skill's `multi-chat.py` for multi-LLM execution
+- This skill does **no aggregation**. If you want a single fused answer, use the built-in `/moa` (Hermes v0.18+) instead
 
 ## Common Pitfalls
 
 | Failure | Cause | Fix |
 |---------|-------|-----|
 | `[Errno 7] Argument list too long` | Prompt >67KB passed via `-q` exceeds ARG_MAX | multi-chat.py v1.1.1+ auto-switches to temp-file mode |
-| Built-in moa used, $5.80 charged | moa toolset enabled + OpenRouter configured | `hermes config set toolsets` to exclude moa |
-| Symlink broken, skill_view fails | Skill path changed / repo moved | `ln -sfn /actual/path ~/.hermes/skills/skill-name` |
+| Symlink broken, skill_view fails | Skill path changed / repo moved | `ln -sfn /actual/path ~/.hermes/skills/hermes-fake-moa` |
 | `mimo-v2.5-pro` times out (300s) | Large prompt (>25KB) causes mimo to hang | Use `deepseek-v4-pro` or `kimi-k2.6` + `glm-5.1` 2-model config instead |
 | Follow-up questions lose context | multi-chat.py is stateless; each run is independent | Embed the previous analysis summary in the new prompt. Previous results persist in `results/` — use `read_file` to fetch and inject as context |
 | `qwen3.6-plus` fails every time | Model loading issue in opencode-go (`Loading weights: 100%` → error) | Exclude this model from panels. See `references/provider-quirks.md` |
